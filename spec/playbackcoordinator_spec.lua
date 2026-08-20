@@ -38,7 +38,10 @@ local function make_adapter()
     local adapter = {
         state = "idle",
         position = 0,
+        duration = nil,
+        paused = false,
         loads = {},
+        commands = {},
         seeks = {},
         plays = 0,
         pauses = 0,
@@ -47,41 +50,61 @@ local function make_adapter()
         closes = 0,
         fail_load = nil,
         fail_resume = nil,
+        fail_stop = nil,
+        stop_waits = false,
     }
     function adapter:load(path)
         self.loads[#self.loads + 1] = path
+        self.commands[#self.commands + 1] = "load"
         if self.fail_load then
             return nil, self.fail_load
         end
         self.state = "loading"
+        self.duration = nil
+        self.paused = false
         return true
     end
     function adapter:seek(position)
+        self.commands[#self.commands + 1] = "seek"
         self.seeks[#self.seeks + 1] = position
         self.position = position
         return true
     end
     function adapter:play()
+        self.commands[#self.commands + 1] = "play"
         self.plays = self.plays + 1
         self.state = "playing"
+        self.paused = false
         return true
     end
     function adapter:pause()
+        self.commands[#self.commands + 1] = "pause"
         self.pauses = self.pauses + 1
-        self.state = "paused"
+        self.paused = true
+        if not self.stop_waits then
+            self.state = "paused"
+        end
         return true
     end
     function adapter:resume()
+        self.commands[#self.commands + 1] = "resume"
         self.resumes = self.resumes + 1
         if self.fail_resume then
             return nil, self.fail_resume
         end
         self.state = "playing"
+        self.paused = false
         return true
     end
     function adapter:stop()
+        self.commands[#self.commands + 1] = "stop"
         self.stops = self.stops + 1
-        self.state = "idle"
+        if self.fail_stop then
+            return nil, self.fail_stop
+        end
+        if not self.stop_waits then
+            self.state = "idle"
+        end
         return true
     end
     function adapter:close()
@@ -93,6 +116,8 @@ local function make_adapter()
         return {
             state = self.state,
             position = self.position,
+            duration = self.duration,
+            paused = self.paused,
             error = self.error,
         }
     end
@@ -102,8 +127,11 @@ end
 local function make_materializer()
     local materializer = {
         paths = {},
+        owned = {},
         removed = {},
         cleaned = 0,
+        fail_remove = false,
+        fail_cleanup = false,
     }
     function materializer:materialize(audio_path, reader)
         local bytes = reader(audio_path)
@@ -112,17 +140,31 @@ local function make_materializer()
         end
         local path = "/private/" .. audio_path
         self.paths[#self.paths + 1] = path
+        self.owned[path] = true
         return path
     end
     function materializer:remove(path)
         self.removed[#self.removed + 1] = path
+        if self.fail_remove then
+            return nil, "remove failed"
+        end
+        self.owned[path] = nil
         return true
     end
     function materializer:cleanup()
         self.cleaned = self.cleaned + 1
+        if self.fail_cleanup then
+            return nil, "cleanup failed"
+        end
         return true
     end
     return materializer
+end
+
+local function mark_ready(adapter)
+    adapter.duration = 2
+    adapter.paused = true
+    adapter.state = "paused"
 end
 
 local function make_overlay()
@@ -242,7 +284,7 @@ describe("playback coordinator", function()
 
         scheduler:fire_any()
         assert.are.equal(0, adapter.plays)
-        adapter.state = "idle"
+        mark_ready(adapter)
         scheduler:fire_any()
         assert.are.equal("playing", coordinator:getState())
         assert.are.equal(1, adapter.plays)
@@ -255,7 +297,7 @@ describe("playback coordinator", function()
         local coordinator, scheduler, adapter, _, resolver, overlay =
             make_fixture(clips_fixture())
         coordinator:start()
-        adapter.state = "idle"
+        mark_ready(adapter)
         scheduler:fire_any()
 
         adapter.position = 0.4
@@ -280,7 +322,7 @@ describe("playback coordinator", function()
         local coordinator, scheduler, adapter, _, _, overlay =
             make_fixture(clips_fixture())
         coordinator:start()
-        adapter.state = "idle"
+        mark_ready(adapter)
         scheduler:fire_any()
         adapter.position = 0.4
         scheduler:fire_any()
@@ -297,20 +339,31 @@ describe("playback coordinator", function()
         assert.are.equal(0, scheduler.tasks[coordinator.poll_action] or 0)
     end)
 
-    it("hands off resources at EOF without overlapping loads", function()
+    it("hands off resources only after asynchronous stop acknowledgement", function()
         local coordinator, scheduler, adapter, materializer =
             make_fixture(clips_fixture())
         coordinator:start()
-        adapter.state = "idle"
+        mark_ready(adapter)
         scheduler:fire_any()
+        adapter.stop_waits = true
         adapter.state = "ended"
         adapter.position = 2
+        scheduler:fire_any()
+        assert.are.equal("stopping", coordinator:getState())
+        assert.are.equal(1, #adapter.loads)
+        assert.are.equal(0, #materializer.removed)
+        scheduler:fire_any()
+        assert.are.equal(1, #adapter.loads)
+        assert.are.equal(0, #materializer.removed)
+
+        adapter.stop_waits = false
+        adapter.state = "idle"
         scheduler:fire_any()
         assert.are.equal(2, #adapter.loads)
         assert.are.equal("book/second.wav", materializer.paths[2]:match("book/second%.wav$"))
         assert.are.equal(1, #materializer.removed)
         assert.are.equal("loading", coordinator:getState())
-        adapter.state = "idle"
+        mark_ready(adapter)
         scheduler:fire_any()
         assert.are.equal(2, #adapter.loads)
         assert.are.equal(2, adapter.plays)
@@ -320,15 +373,44 @@ describe("playback coordinator", function()
         local clips = clips_fixture()
         clips[2] = nil
         clips[3] = nil
-        local coordinator, scheduler, adapter, _, _, overlay = make_fixture(clips)
+        local coordinator, scheduler, adapter, materializer, _, overlay = make_fixture(clips)
         coordinator:start()
-        adapter.state = "idle"
+        mark_ready(adapter)
         scheduler:fire_any()
         adapter.state = "ended"
         scheduler:fire_any()
+        assert.are.equal("stopping", coordinator:getState())
+        assert.are.equal(1, adapter.stops)
+        assert.are.equal(0, #materializer.removed)
+        adapter.state = "idle"
+        scheduler:fire_any()
         assert.are.equal("ended", coordinator:getState())
         assert.are.equal(0, scheduler.tasks[coordinator.poll_action] or 0)
+        assert.are.equal(1, #materializer.removed)
+        assert.is_nil(coordinator.materialized_path)
+        assert.is_nil(next(materializer.owned))
         assert.is_true(overlay.clears > 0)
+    end)
+
+    it("pauses immediately after load and waits for duration before seeking or playing", function()
+        local clips = clips_fixture()
+        clips[2] = nil
+        clips[3] = nil
+        clips[1].clip_begin = 0.25
+        local coordinator, scheduler, adapter = make_fixture(clips)
+        assert.is_true(coordinator:start())
+        assert.are.same({ "load", "pause" }, adapter.commands)
+
+        scheduler:fire_any()
+        assert.are.equal(0, #adapter.seeks)
+        assert.are.equal(0, adapter.plays)
+        assert.are.equal("loading", coordinator:getState())
+
+        mark_ready(adapter)
+        scheduler:fire_any()
+        assert.are.same({ "load", "pause", "seek", "play" }, adapter.commands)
+        assert.are.equal(0.25, adapter.seeks[1])
+        assert.are.equal(1, adapter.plays)
     end)
 
     it("fails explicit extraction and adapter load errors", function()
@@ -356,7 +438,7 @@ describe("playback coordinator", function()
             make_fixture(clips_fixture())
         resolver.fail.one = true
         coordinator:start()
-        adapter.state = "idle"
+        mark_ready(adapter)
         scheduler:fire_any()
         adapter.position = 0.5
         scheduler:fire_any()
@@ -379,12 +461,65 @@ describe("playback coordinator", function()
         local coordinator, scheduler, adapter, materializer, _, overlay =
             make_fixture(clips_fixture())
         coordinator:start()
-        adapter.state = "idle"
+        mark_ready(adapter)
         scheduler:fire_any()
         assert.is_true(coordinator:stop())
+        assert.are.equal("stopping", coordinator:getState())
+        assert.are.equal(0, #materializer.removed)
+        scheduler:fire_any()
         assert.are.equal("idle", coordinator:getState())
         assert.are.equal(1, #materializer.removed)
         assert.is_true(overlay.clears > 0)
         assert.are.equal(0, scheduler.tasks[coordinator.poll_action] or 0)
+    end)
+
+    it("surfaces adapter status errors and disables terminal error controls", function()
+        local coordinator, scheduler, adapter, _, _, _, errors =
+            make_fixture(clips_fixture())
+        assert.is_true(coordinator:start())
+        adapter.error = "decoder disconnected"
+        adapter.state = "error"
+        scheduler:fire_any()
+        assert.are.equal("error", coordinator:getState())
+        assert.matches("decoder disconnected", errors[1])
+        assert.is_false(coordinator:isActionEnabled())
+        assert.is_false(coordinator:isStopEnabled())
+        local retry_ok, retry_error = coordinator:start()
+        assert.is_nil(retry_ok)
+        assert.matches("reopen the document", retry_error)
+    end)
+
+    it("surfaces transition cleanup errors without claiming the resource is gone", function()
+        local clips = clips_fixture()
+        clips[2] = nil
+        clips[3] = nil
+        local coordinator, scheduler, adapter, materializer, _, _, errors =
+            make_fixture(clips)
+        assert.is_true(coordinator:start())
+        mark_ready(adapter)
+        scheduler:fire_any()
+        materializer.fail_remove = true
+        adapter.state = "ended"
+        scheduler:fire_any()
+        adapter.state = "idle"
+        scheduler:fire_any()
+        assert.are.equal("error", coordinator:getState())
+        assert.matches("remove failed", errors[1])
+        assert.is_not_nil(coordinator.materialized_path)
+        assert.is_true(next(materializer.owned) ~= nil)
+    end)
+
+    it("keeps coordinator ownership visible when close cleanup fails", function()
+        local coordinator, scheduler, adapter, materializer =
+            make_fixture(clips_fixture())
+        assert.is_true(coordinator:start())
+        mark_ready(adapter)
+        scheduler:fire_any()
+        materializer.fail_cleanup = true
+        assert.is_true(coordinator:close())
+        assert.are.equal("closed", coordinator:getState())
+        assert.is_not_nil(coordinator.materialized_path)
+        assert.matches("cleanup failed", coordinator.cleanup_error)
+        assert.is_true(coordinator:close())
     end)
 end)

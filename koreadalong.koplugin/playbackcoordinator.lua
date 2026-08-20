@@ -4,6 +4,7 @@ PlaybackCoordinator.__index = PlaybackCoordinator
 PlaybackCoordinator.STATES = {
     IDLE = "idle",
     LOADING = "loading",
+    STOPPING = "stopping",
     PLAYING = "playing",
     PAUSED = "paused",
     ENDED = "ended",
@@ -81,6 +82,9 @@ function PlaybackCoordinator.new(options)
         generation = 0,
         closed = false,
         error = nil,
+        cleanup_error = nil,
+        transition = nil,
+        stop_issued = false,
         poll_interval = options.poll_interval or POLL_INTERVAL,
     }, PlaybackCoordinator)
 
@@ -99,6 +103,7 @@ function PlaybackCoordinator.new(options)
         self:_poll()
         if not self.closed and callback_generation == self.generation
             and (self.state == PlaybackCoordinator.STATES.LOADING
+                or self.state == PlaybackCoordinator.STATES.STOPPING
                 or self.state == PlaybackCoordinator.STATES.PLAYING) then
             self:_schedule_poll()
         end
@@ -118,16 +123,28 @@ function PlaybackCoordinator:getActionLabel()
         return "Resume"
     elseif self.state == PlaybackCoordinator.STATES.LOADING then
         return "Loading…"
+    elseif self.state == PlaybackCoordinator.STATES.STOPPING then
+        return "Stopping…"
+    elseif self.state == PlaybackCoordinator.STATES.ERROR then
+        return "Unavailable"
     end
     return "Start"
 end
 
 function PlaybackCoordinator:isActionEnabled()
-    return not self.closed and self.state ~= PlaybackCoordinator.STATES.LOADING
+    -- MpvAudio's ERROR state is terminal for this document session. Reopening
+    -- the document is the recovery path; do not expose a Start action that
+    -- can only repeat the same failed adapter session.
+    return not self.closed
+        and self.state ~= PlaybackCoordinator.STATES.LOADING
+        and self.state ~= PlaybackCoordinator.STATES.STOPPING
+        and self.state ~= PlaybackCoordinator.STATES.ERROR
 end
 
 function PlaybackCoordinator:isStopEnabled()
     return not self.closed
+        and self.state ~= PlaybackCoordinator.STATES.ERROR
+        and self.state ~= PlaybackCoordinator.STATES.STOPPING
         and self.state ~= PlaybackCoordinator.STATES.IDLE
         and self.state ~= PlaybackCoordinator.STATES.ENDED
 end
@@ -153,16 +170,20 @@ function PlaybackCoordinator:_clear_overlay()
     invoke_optional(self.overlay, "clear")
 end
 
-function PlaybackCoordinator:_release_audio()
-    -- MpvAudio stop/unload is deliberately issued before removing the owned
-    -- file. The materializer refuses to remove paths it did not create.
-    invoke_optional(self.adapter, "stop")
-    self:_clear_overlay()
+function PlaybackCoordinator:_remove_materialized_audio()
     if self.materialized_path then
-        invoke_optional(self.materializer, "remove", self.materialized_path)
+        local removed, remove_error = invoke(
+            self.materializer,
+            "remove",
+            self.materialized_path
+        )
+        if not removed then
+            return nil, remove_error or "unable to remove materialized audio"
+        end
     end
     self.materialized_path = nil
     self.current_audio_path = nil
+    return true
 end
 
 function PlaybackCoordinator:_report_error(error_message)
@@ -172,20 +193,31 @@ function PlaybackCoordinator:_report_error(error_message)
     end
 end
 
-function PlaybackCoordinator:_fail(error_message)
+function PlaybackCoordinator:_fail(error_message, skip_stop)
     if self.closed then
         return nil, error_message
     end
     self.generation = self.generation + 1
     self:_unschedule_poll()
     self.intent = nil
-    self.state = PlaybackCoordinator.STATES.ERROR
-    self:_report_error(error_message)
+    self.transition = nil
     if self.materialized_path or self.current_audio_path then
-        self:_release_audio()
+        if not skip_stop and not self.stop_issued then
+            self.stop_issued = true
+            invoke_optional(self.adapter, "stop")
+        end
+        local removed, remove_error = self:_remove_materialized_audio()
+        if not removed then
+            error_message = tostring(error_message or "read-along error")
+                .. "; cleanup failed: " .. tostring(remove_error)
+            self.cleanup_error = remove_error
+        end
     else
         self:_clear_overlay()
     end
+    self.stop_issued = false
+    self.state = PlaybackCoordinator.STATES.ERROR
+    self:_report_error(error_message)
     return nil, self.error
 end
 
@@ -258,7 +290,7 @@ function PlaybackCoordinator:_prepare_resource(index)
     end
 
     if self.materialized_path or self.current_audio_path then
-        self:_release_audio()
+        return self:_fail("previous audio resource is still owned")
     else
         self:_clear_overlay()
     end
@@ -280,6 +312,10 @@ function PlaybackCoordinator:_prepare_resource(index)
     local loaded, load_error = invoke(self.adapter, "load", local_path)
     if not loaded then
         return self:_fail(load_error or "unable to load audio")
+    end
+    local paused, pause_error = invoke(self.adapter, "pause")
+    if not paused then
+        return self:_fail(pause_error or "unable to pause newly loaded audio")
     end
     self:_schedule_poll()
     return true
@@ -316,16 +352,76 @@ function PlaybackCoordinator:_advance()
     local next_index = current_index + 1
     if not self.clips[next_index] then
         self.intent = nil
-        self.state = PlaybackCoordinator.STATES.ENDED
-        self:_unschedule_poll()
         self:_clear_overlay()
-        return true
+        return self:_begin_stopping{
+            kind = "ended",
+        }
     end
     if self.current_audio_path == self.clips[next_index].audio_path
         and self.materialized_path then
         return self:_prepare_same_resource(next_index)
     end
-    return self:_prepare_resource(next_index)
+    return self:_begin_stopping{
+        kind = "resource",
+        next_index = next_index,
+    }
+end
+
+function PlaybackCoordinator:_begin_stopping(transition)
+    if self.state == PlaybackCoordinator.STATES.STOPPING then
+        return true
+    end
+    self.transition = transition
+    self.state = PlaybackCoordinator.STATES.STOPPING
+    self.stop_issued = true
+    local stopped, stop_error = invoke(self.adapter, "stop")
+    if not stopped then
+        return self:_fail(stop_error or "unable to stop audio", true)
+    end
+    self:_schedule_poll()
+    return true
+end
+
+function PlaybackCoordinator:_finish_stopping(status)
+    if status.state == "error" or status.state == "closed" then
+        return self:_fail(
+            status.error or "audio failed while stopping",
+            true
+        )
+    end
+    if status.state ~= "idle" then
+        return true
+    end
+
+    local transition = self.transition
+    self.transition = nil
+    local removed, remove_error = self:_remove_materialized_audio()
+    if not removed then
+        self.stop_issued = true
+        return self:_fail(
+            "unable to remove stopped audio: " .. tostring(remove_error),
+            true
+        )
+    end
+    self.stop_issued = false
+
+    if transition.kind == "ended" then
+        self.current_clip_index = nil
+        self.intent = nil
+        self.state = PlaybackCoordinator.STATES.ENDED
+        self:_unschedule_poll()
+        self:_clear_overlay()
+        return true
+    elseif transition.kind == "stop" then
+        self.current_clip_index = nil
+        self.intent = nil
+        self.state = PlaybackCoordinator.STATES.IDLE
+        self:_unschedule_poll()
+        self:_clear_overlay()
+        return true
+    end
+
+    return self:_prepare_resource(transition.next_index)
 end
 
 function PlaybackCoordinator:_finish_load(status)
@@ -334,6 +430,13 @@ function PlaybackCoordinator:_finish_load(status)
         return self:_fail(status.error or "audio ended before it became ready")
     end
     if status.state == "loading" or status.state == "startup" then
+        return true
+    end
+    if type(status.duration) ~= "number"
+        or status.duration ~= status.duration
+        or status.duration == math.huge
+        or status.duration <= 0
+        or status.paused ~= true then
         return true
     end
 
@@ -348,19 +451,15 @@ function PlaybackCoordinator:_finish_load(status)
             return self:_fail(seek_error or "unable to seek audio")
         end
     end
-    local command
-    if self.intent == PlaybackCoordinator.STATES.PAUSED then
-        command = "pause"
+    if self.intent == PlaybackCoordinator.STATES.PLAYING then
+        local resumed, resume_error = invoke(self.adapter, "play")
+        if not resumed then
+            return self:_fail(resume_error or "unable to start audio")
+        end
+        self.state = PlaybackCoordinator.STATES.PLAYING
     else
-        command = "play"
+        self.state = PlaybackCoordinator.STATES.PAUSED
     end
-    local resumed, resume_error = invoke(self.adapter, command)
-    if not resumed then
-        return self:_fail(resume_error or "unable to start audio")
-    end
-    self.state = self.intent == PlaybackCoordinator.STATES.PAUSED
-        and PlaybackCoordinator.STATES.PAUSED
-        or PlaybackCoordinator.STATES.PLAYING
     self:_update_overlay(self.current_audio_path, clip.clip_begin)
     return true
 end
@@ -373,6 +472,10 @@ function PlaybackCoordinator:_poll()
     end
     if status.state == "error" then
         self:_fail(status.error or "audio playback failed")
+        return
+    end
+    if self.state == PlaybackCoordinator.STATES.STOPPING then
+        self:_finish_stopping(status)
         return
     end
     if self.state == PlaybackCoordinator.STATES.LOADING then
@@ -399,6 +502,9 @@ function PlaybackCoordinator:start()
     if #self.clips == 0 then
         return nil, "this document has no media overlays"
     end
+    if self.state == PlaybackCoordinator.STATES.ERROR then
+        return nil, "read-along audio failed; reopen the document to retry"
+    end
     if self.state == PlaybackCoordinator.STATES.PLAYING then
         return true
     end
@@ -407,6 +513,9 @@ function PlaybackCoordinator:start()
     end
     if self.state == PlaybackCoordinator.STATES.LOADING then
         return nil, "audio is still loading"
+    end
+    if self.state == PlaybackCoordinator.STATES.STOPPING then
+        return nil, "audio is still stopping"
     end
     self.error = nil
     self.intent = PlaybackCoordinator.STATES.PLAYING
@@ -455,14 +564,24 @@ function PlaybackCoordinator:stop()
     if self.closed then
         return true
     end
+    if self.state == PlaybackCoordinator.STATES.ERROR then
+        return nil, "read-along audio failed; reopen the document to retry"
+    end
+    if self.state == PlaybackCoordinator.STATES.STOPPING then
+        return true
+    end
+    if self.state == PlaybackCoordinator.STATES.IDLE
+        or self.state == PlaybackCoordinator.STATES.ENDED then
+        return true
+    end
     self.generation = self.generation + 1
     self:_unschedule_poll()
     self.intent = nil
-    self.state = PlaybackCoordinator.STATES.IDLE
-    self:_release_audio()
-    self.current_clip_index = nil
     self.error = nil
-    return true
+    self:_clear_overlay()
+    return self:_begin_stopping{
+        kind = "stop",
+    }
 end
 
 function PlaybackCoordinator:close()
@@ -474,14 +593,23 @@ function PlaybackCoordinator:close()
     self.generation = self.generation + 1
     self.closed = true
     self:_unschedule_poll()
-    invoke_optional(self.adapter, "stop")
+    if self.state ~= PlaybackCoordinator.STATES.STOPPING then
+        invoke_optional(self.adapter, "stop")
+    end
     invoke_optional(self.adapter, "close")
     self:_clear_overlay()
     invoke_optional(self.overlay, "deactivate")
-    invoke_optional(self.materializer, "cleanup")
-    self.materialized_path = nil
-    self.current_audio_path = nil
+    local cleaned, cleanup_error = invoke(self.materializer, "cleanup")
+    if cleaned then
+        self.materialized_path = nil
+        self.current_audio_path = nil
+        self.cleanup_error = nil
+    else
+        self.cleanup_error = cleanup_error
+    end
     self.intent = nil
+    self.transition = nil
+    self.stop_issued = false
     self.state = PlaybackCoordinator.STATES.CLOSED
     return true
 end

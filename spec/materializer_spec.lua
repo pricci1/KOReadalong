@@ -103,4 +103,57 @@ describe("private audio materializer", function()
         assert.is_nil(read_path)
         assert.matches("backend unavailable", read_error)
     end)
+
+    it("retains ownership after failed removal and retries file and directory cleanup", function()
+        local remove_files = true
+        local remove_directory = false
+        local directory
+        local fake = {
+            eintr = 4,
+            make_directory = function()
+                directory = "/fake/koreadalong-retry"
+                return directory
+            end,
+            make_file = function()
+                return 11, directory .. "/audio-abc123.wav"
+            end,
+            write = function(_, _, length) return length end,
+            close = function() return true end,
+            remove = function(path)
+                if path == directory then
+                    if remove_directory then
+                        return true
+                    end
+                    return nil, "directory busy"
+                end
+                if remove_files then
+                    return true
+                end
+                return nil, "file busy"
+            end,
+            error_string = function() return "fake error" end,
+        }
+        local materializer = Materializer.new{ syscalls = fake }
+        local path = assert(materializer:materialize(
+            "audio.wav",
+            function() return "bytes" end
+        ))
+
+        remove_files = false
+        local removed, remove_error = materializer:remove(path)
+        assert.is_nil(removed)
+        assert.matches("file busy", remove_error)
+        assert.is_true(materializer.owned_files[path])
+
+        remove_files = true
+        assert.is_true(materializer:remove(path))
+        local cleanup_ok, cleanup_error = materializer:cleanup()
+        assert.is_nil(cleanup_ok)
+        assert.matches("directory busy", cleanup_error)
+        assert.are.equal(directory, materializer.session_dir)
+
+        remove_directory = true
+        assert.is_true(materializer:cleanup())
+        assert.is_nil(materializer.session_dir)
+    end)
 end)

@@ -146,6 +146,11 @@ does not add a null sink and reports a real no-sink failure. Deterministic
 tests inject process, transport, and timer boundaries; the coordinator and UI
 controls remain outside this slice.
 
+An adapter error is terminal for the current document session: the compact
+menu disables both playback actions and reports that the document must be
+reopened to retry. Resource replacement and final EOF first wait for the
+adapter's idle acknowledgement before removing the private extracted file.
+
 Kindle will implement the same high-level audio contract separately behind its
 own capability-gated daemon/Bluetooth adapter. Desktop mpv behavior is not a
 Kindle dependency.

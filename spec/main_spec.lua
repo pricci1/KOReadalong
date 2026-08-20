@@ -92,14 +92,21 @@ describe("KoReadalong lifecycle and menu", function()
                     return "Pause"
                 elseif self.state == "paused" then
                     return "Resume"
+                elseif self.state == "error" then
+                    return "Unavailable"
                 end
                 return "Start"
             end
             function instance:isActionEnabled()
                 return self.state ~= "loading"
+                    and self.state ~= "stopping"
+                    and self.state ~= "error"
             end
             function instance:isStopEnabled()
-                return self.state ~= "idle" and self.state ~= "ended"
+                return self.state ~= "idle"
+                    and self.state ~= "ended"
+                    and self.state ~= "stopping"
+                    and self.state ~= "error"
             end
             function instance:toggle()
                 self.state = self.state == "playing" and "paused" or "playing"
@@ -233,6 +240,11 @@ describe("KoReadalong lifecycle and menu", function()
         submenu[1].callback()
         assert.are.equal("Resume", submenu[1].text_func())
         submenu[2].callback()
+        assert.is_false(submenu[2].enabled_func())
+
+        coordinator.state = "error"
+        assert.are.equal("Unavailable", submenu[1].text_func())
+        assert.is_false(submenu[1].enabled_func())
         assert.is_false(submenu[2].enabled_func())
     end)
 

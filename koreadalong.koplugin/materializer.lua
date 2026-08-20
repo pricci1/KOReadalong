@@ -104,6 +104,33 @@ local function close_file(syscalls, fd)
     return true
 end
 
+local function remove_path(self, path)
+    local ok, removed, error_message = pcall(
+        self.syscalls.remove,
+        path
+    )
+    if not ok then
+        return nil, "remove failed: " .. tostring(removed)
+    end
+    if not removed then
+        return nil, "remove failed: " .. tostring(error_message or "unknown error")
+    end
+    return true
+end
+
+function Materializer:_remove_owned(path)
+    if not path or not self.owned_files[path] then
+        return false, "audio path is not owned"
+    end
+    local removed, error_message = remove_path(self, path)
+    if not removed then
+        return nil, "unable to remove private audio '" .. path
+            .. "': " .. tostring(error_message)
+    end
+    self.owned_files[path] = nil
+    return true
+end
+
 function Materializer:materialize(audio_path, read_file)
     if type(audio_path) ~= "string" or audio_path == "" then
         return nil, "audio archive path must be a non-empty string"
@@ -161,32 +188,41 @@ function Materializer:materialize(audio_path, read_file)
 
     local close_ok, close_error = close_file(self.syscalls, fd)
     if write_error or not close_ok then
-        self.syscalls.remove(path)
-        self.owned_files[path] = nil
-        return nil, write_error or close_error
+        local removed, remove_error = self:_remove_owned(path)
+        local failure = write_error or close_error
+        if not removed then
+            failure = failure .. "; " .. tostring(remove_error)
+        end
+        return nil, failure
     end
     return path
 end
 
 function Materializer:remove(path)
-    if not path or not self.owned_files[path] then
-        return false
-    end
-    self.syscalls.remove(path)
-    self.owned_files[path] = nil
-    return true
+    return self:_remove_owned(path)
 end
 
 function Materializer:cleanup()
+    local first_error
     for path in pairs(self.owned_files) do
-        self.syscalls.remove(path)
-        self.owned_files[path] = nil
+        local removed, error_message = self:_remove_owned(path)
+        if not removed and not first_error then
+            first_error = error_message
+        end
     end
-    if self.session_dir then
-        self.syscalls.remove(self.session_dir)
-        self.session_dir = nil
+    if self.session_dir and not next(self.owned_files) then
+        local removed, error_message = remove_path(self, self.session_dir)
+        if removed then
+            self.session_dir = nil
+        elseif not first_error then
+            first_error = "unable to remove private audio directory '"
+                .. self.session_dir .. "': " .. tostring(error_message)
+        end
     end
     self.closed = true
+    if first_error then
+        return nil, first_error
+    end
     return true
 end
 
