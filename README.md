@@ -1,8 +1,37 @@
 # KoReadalong
 
-KoReadalong is a [KOReader](https://github.com/koreader/koreader) plugin for reading EPUB 3 books alongside their embedded audio. The MVP will play EPUB Media Overlays and underline the sentence or paragraph currently being narrated.
+KoReadalong is a [KOReader](https://github.com/koreader/koreader) plugin for reading EPUB 3 books alongside their embedded audio. The Linux desktop MVP plays EPUB Media Overlays and underlines the sentence or paragraph currently being narrated.
 
 The primary target is a jailbroken Kindle with Bluetooth audio. Development and automated checks use KOReader's Linux desktop build.
+
+## Install on Linux
+
+KoReadalong currently requires `mpv` on `PATH`. On Debian or Ubuntu:
+
+```sh
+sudo apt install mpv
+```
+
+Copy `koreadalong.koplugin` into KOReader's `plugins` directory, preserving the
+directory name, then restart KOReader:
+
+```text
+koreader/
+└── plugins/
+    └── koreadalong.koplugin/
+        ├── _meta.lua
+        ├── main.lua
+        └── …
+```
+
+Open an EPUB containing EPUB 3 Media Overlays. Supported books gain a
+**Read along** menu with **Start**, **Pause/Resume**, and **Stop** controls.
+Books without media overlays are unaffected and do not show the menu.
+
+The current MVP supports ordinary Storyteller-style SMIL targets using XHTML
+element IDs. Web Text Fragment targets, complex DOM ranges, Kindle audio, and
+automatic navigation to off-screen narration are not yet supported. Underlines
+are ephemeral and never create KOReader annotations.
 
 ## Development
 
@@ -12,6 +41,7 @@ Fresh Amp orbs are prepared by `.agents/setup`. On another Debian-based machine,
 ./.agents/setup
 make check
 make mpv-integration
+make smoke-integration
 make run
 ```
 
@@ -22,5 +52,10 @@ The project follows KOReader's upstream Luacheck configuration. LuaLS settings a
 `make mpv-integration` runs the production LuaJIT mpv process and Unix IPC
 transport against a temporary WAV fixture. It uses `--ao=null` only for this
 test, so it is suitable for headless development environments.
+
+`make smoke-integration` generates a synthetic EPUB and exercises the complete
+pinned-KOReader pipeline: package and SMIL parsing, private audio extraction,
+real mpv IPC, timeline lookup, CRe fragment resolution, ephemeral underline,
+EOF handling, and cleanup.
 
 See [docs/architecture.md](docs/architecture.md) for the MVP boundaries and compatibility findings.
