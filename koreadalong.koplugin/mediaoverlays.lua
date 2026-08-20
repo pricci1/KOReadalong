@@ -247,8 +247,8 @@ local function normalize_path(path)
         if part == ".." then
             if #parts > 0 and parts[#parts] ~= ".." then
                 parts[#parts] = nil
-            elseif not absolute then
-                parts[#parts + 1] = part
+            else
+                return nil, "path escapes EPUB ZIP root: " .. path
             end
         elseif part ~= "." then
             parts[#parts + 1] = part
@@ -258,7 +258,7 @@ local function normalize_path(path)
     if absolute then
         result = "/" .. result
     end
-    return result
+    return result, nil
 end
 
 local function split_reference(reference)
@@ -282,7 +282,11 @@ local function resolve_reference(base_path, reference)
         local directory = base_path:match("^(.*)/")
         path = (directory and directory .. "/" or "") .. path
     end
-    return normalize_path(path), fragment
+    local normalized, error_message = normalize_path(path)
+    if not normalized then
+        return nil, error_message
+    end
+    return normalized, fragment
 end
 
 local function parse_clock(value)
@@ -343,28 +347,22 @@ local function parse_clock(value)
     return nil, "invalid SMIL clock value '" .. value .. "'"
 end
 
-local function normalized_documents(documents, single_path)
+local function normalized_documents(documents)
     local result = {}
-    if type(documents) == "string" and single_path then
-        result[normalize_path(single_path)] = documents
-    elseif type(documents) == "table" then
-        if documents.path and documents.xml then
-            result[normalize_path(documents.path)] = documents.xml
-        elseif #documents > 0 then
-            for _, document in ipairs(documents) do
-                result[normalize_path(document.path)] = document.xml
-            end
-        else
-            for path, document in pairs(documents) do
-                if type(document) == "table" then
-                    result[normalize_path(path)] = document.xml
-                else
-                    result[normalize_path(path)] = document
-                end
-            end
-        end
+    if type(documents) ~= "table" then
+        return nil, "SMIL documents must be a map of ZIP-entry path to XML"
     end
-    return result
+    for path, document in pairs(documents) do
+        if type(path) ~= "string" or type(document) ~= "string" then
+            return nil, "SMIL documents must map string paths to XML strings"
+        end
+        local normalized, error_message = normalize_path(path)
+        if not normalized then
+            return nil, error_message
+        end
+        result[normalized] = document
+    end
+    return result, nil
 end
 
 local function parse_smil(smil_xml, smil_path, content_path)
@@ -445,15 +443,11 @@ function MediaOverlays.parse_clock(value)
     return parse_clock(value)
 end
 
-function MediaOverlays.split_reference(reference)
-    return split_reference(reference)
-end
-
 function MediaOverlays.resolve_path(base_path, reference)
     return resolve_reference(base_path, reference)
 end
 
-function MediaOverlays.parse(opf_xml, opf_path, smil_documents, single_smil_path)
+function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
     local package, xml_error = parse_xml(opf_xml)
     if not package then
         return nil, "invalid OPF XML: " .. xml_error
@@ -466,7 +460,7 @@ function MediaOverlays.parse(opf_xml, opf_path, smil_documents, single_smil_path
         return nil, "OPF document has no manifest"
     end
     local items_by_id = {}
-    local content_items = {}
+    local overlay_items_by_id = {}
     for _, item in ipairs(manifest.children) do
         if item.name == "item" then
             local attributes = item.attributes
@@ -474,49 +468,88 @@ function MediaOverlays.parse(opf_xml, opf_path, smil_documents, single_smil_path
                 items_by_id[attributes.id] = attributes
             end
             if attributes["media-type"] == "application/xhtml+xml" then
-                content_items[#content_items + 1] = attributes
+                if attributes["media-overlay"] then
+                    if not attributes.id then
+                        return nil, "XHTML overlay item has no manifest id"
+                    end
+                    overlay_items_by_id[attributes.id] = attributes
+                end
             end
         end
     end
-    local documents = normalized_documents(smil_documents, single_smil_path)
+    local spine = find_descendant(package, "spine")
+    if not spine then
+        return nil, "OPF document has no spine"
+    end
+    local documents, documents_error = normalized_documents(smil_documents)
+    if not documents then
+        return nil, documents_error
+    end
     local clips = {}
-    for _, content in ipairs(content_items) do
-        if content["media-overlay"] then
-            if not content.href then
-                return nil, "XHTML item '" .. (content.id or "?") .. "' has no href"
+    local spine_overlay_ids = {}
+    for _, itemref in ipairs(spine.children) do
+        if itemref.name == "itemref" then
+            local idref = itemref.attributes.idref
+            if not idref or idref == "" then
+                return nil, "spine itemref is missing idref"
             end
-            local content_path = resolve_reference(opf_path, content.href)
-            local smil_item = items_by_id[content["media-overlay"]]
-            if not smil_item then
-                return nil, "XHTML item '" .. (content.id or "?")
-                    .. "' references missing media-overlay '"
-                    .. content["media-overlay"] .. "'"
+            local content = items_by_id[idref]
+            if not content then
+                return nil, "spine itemref references missing manifest item '" .. idref .. "'"
             end
-            if not smil_item.href then
-                return nil, "media-overlay item '" .. content["media-overlay"]
-                    .. "' has no href"
+            if overlay_items_by_id[idref] then
+                spine_overlay_ids[idref] = true
+                if not content.href then
+                    return nil, "XHTML item '" .. (content.id or "?") .. "' has no href"
+                end
+                local content_path, content_path_error = resolve_reference(
+                    opf_path,
+                    content.href
+                )
+                if not content_path then
+                    return nil, content_path_error
+                end
+                local smil_item = items_by_id[content["media-overlay"]]
+                if not smil_item then
+                    return nil, "XHTML item '" .. (content.id or "?")
+                        .. "' references missing media-overlay '"
+                        .. content["media-overlay"] .. "'"
+                end
+                if not smil_item.href then
+                    return nil, "media-overlay item '" .. content["media-overlay"]
+                        .. "' has no href"
+                end
+                local smil_path, smil_path_error = resolve_reference(
+                    opf_path,
+                    smil_item.href
+                )
+                if not smil_path then
+                    return nil, smil_path_error
+                end
+                local smil_xml = documents[smil_path]
+                if not smil_xml then
+                    return nil, "SMIL document not provided for '" .. smil_path .. "'"
+                end
+                local smil_clips, smil_error = parse_smil(
+                    smil_xml,
+                    smil_path,
+                    content_path
+                )
+                if not smil_clips then
+                    return nil, "invalid SMIL '" .. smil_path .. "': " .. smil_error
+                end
+                for _, clip in ipairs(smil_clips) do
+                    clips[#clips + 1] = clip
+                end
             end
-            local smil_path = resolve_reference(opf_path, smil_item.href)
-            local smil_xml = documents[smil_path]
-            if not smil_xml then
-                return nil, "SMIL document not provided for '" .. smil_path .. "'"
-            end
-            local smil_clips, smil_error = parse_smil(
-                smil_xml,
-                smil_path,
-                content_path
-            )
-            if not smil_clips then
-                return nil, "invalid SMIL '" .. smil_path .. "': " .. smil_error
-            end
-            for _, clip in ipairs(smil_clips) do
-                clips[#clips + 1] = clip
-            end
+        end
+    end
+    for id, content in pairs(overlay_items_by_id) do
+        if not spine_overlay_ids[id] then
+            return nil, "XHTML overlay item '" .. id .. "' is not referenced by spine"
         end
     end
     return clips
 end
-
-MediaOverlays.parse_media_overlays = MediaOverlays.parse
 
 return MediaOverlays

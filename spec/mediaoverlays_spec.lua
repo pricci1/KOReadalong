@@ -10,7 +10,13 @@ local OPF = [[
         <item id="chapter-mo" href="media/chapter.smil" media-type="application/smil+xml"/>
         <item id="other" href="text/other.xhtml" media-type="application/xhtml+xml" media-overlay="other-mo"/>
         <item id="other-mo" href="media/other.smil" media-type="application/smil+xml"/>
+        <item id="cover" href="text/cover.xhtml" media-type="application/xhtml+xml"/>
     </manifest>
+    <spine>
+        <itemref idref="other"/>
+        <itemref idref="cover"/>
+        <itemref idref="chapter"/>
+    </spine>
 </package>
 ]]
 
@@ -46,8 +52,8 @@ local OTHER_SMIL = [[
 
 local function parse_fixture(smil)
     return MediaOverlays.parse(OPF, "book/package.opf", {
-        { path = "book/media/chapter.smil", xml = smil or CHAPTER_SMIL },
-        { path = "book/media/other.smil", xml = OTHER_SMIL },
+        ["book/media/chapter.smil"] = smil or CHAPTER_SMIL,
+        ["book/media/other.smil"] = OTHER_SMIL,
     })
 end
 
@@ -79,16 +85,21 @@ describe("EPUB media overlays", function()
         assert.are.equal(4, #clips)
 
         assert.are.same({
+            text_path = "book/text/other.xhtml",
+            text_fragment = "only",
+            audio_path = "book/audio/other.mp3",
+            clip_begin = 62.25,
+            clip_end = 63,
+        }, clips[1])
+        assert.are.same({
             text_path = "book/text/chapter.xhtml",
             text_fragment = "first",
             audio_path = "book/audio/part-one.mp3",
             clip_begin = 1.5,
             clip_end = 2,
-        }, clips[1])
-        assert.are.equal("second", clips[2].text_fragment)
-        assert.are.equal("book/audio/part-two.mp3", clips[3].audio_path)
-        assert.are.equal("only", clips[4].text_fragment)
-        assert.are.equal(62.25, clips[4].clip_begin)
+        }, clips[2])
+        assert.are.equal("second", clips[3].text_fragment)
+        assert.are.equal("book/audio/part-two.mp3", clips[4].audio_path)
     end)
 
     it("normalizes relative paths without a ZIP-root assumption", function()
@@ -98,6 +109,20 @@ describe("EPUB media overlays", function()
         )
         assert.are.equal("novel/text/chapter.xhtml", path)
         assert.are.equal("sentence", fragment)
+
+        path, fragment = MediaOverlays.resolve_path(
+            "novel/content/media/chapter.smil",
+            "../../../audio/track.mp3"
+        )
+        assert.are.equal("audio/track.mp3", path)
+        assert.is_nil(fragment)
+
+        path, fragment = MediaOverlays.resolve_path(
+            "novel/content/media/chapter.smil",
+            "../../../../audio/track.mp3"
+        )
+        assert.is_nil(path)
+        assert.matches("escapes EPUB ZIP root", fragment)
     end)
 
     it("rejects a par missing a required field", function()
@@ -106,22 +131,49 @@ describe("EPUB media overlays", function()
         assert.is_nil(clips)
         assert.matches("missing clipEnd", error_message)
     end)
+
+    it("rejects invalid spine references for overlays", function()
+        local invalid_opf = OPF:gsub('<itemref idref="chapter"/>', '<itemref idref="missing"/>')
+        local clips, error_message = MediaOverlays.parse(
+            invalid_opf,
+            "book/package.opf",
+            {
+                ["book/media/chapter.smil"] = CHAPTER_SMIL,
+                ["book/media/other.smil"] = OTHER_SMIL,
+            }
+        )
+        assert.is_nil(clips)
+        assert.matches("missing manifest item", error_message)
+    end)
 end)
 
 describe("media overlay timeline", function()
     local clips = {
-        { text_fragment = "one", clip_begin = 0, clip_end = 1 },
-        { text_fragment = "two", clip_begin = 1, clip_end = 2 },
-        { text_fragment = "three", clip_begin = 3, clip_end = 4 },
+        { audio_path = "one.mp3", text_fragment = "one", clip_begin = 0, clip_end = 1 },
+        { audio_path = "two.mp3", text_fragment = "other", clip_begin = 0, clip_end = 1 },
+        { audio_path = "one.mp3", text_fragment = "two", clip_begin = 1, clip_end = 2 },
+        { audio_path = "one.mp3", text_fragment = "three", clip_begin = 3, clip_end = 4 },
     }
-    local timeline = Timeline.new(clips)
+    local timeline, timeline_error = Timeline.new(clips)
 
-    it("uses half-open intervals and binary-search lookup", function()
-        assert.is_nil(timeline:lookup(-0.01))
-        assert.are.equal("one", timeline:lookup(0).text_fragment)
-        assert.are.equal("two", timeline:lookup(1).text_fragment)
-        assert.is_nil(timeline:lookup(2))
-        assert.are.equal("three", timeline:lookup(3).text_fragment)
-        assert.is_nil(timeline:lookup(4))
+    it("indexes each audio resource with half-open binary-search lookup", function()
+        assert.is_nil(timeline_error)
+        assert.is_nil(timeline:lookup("one.mp3", -0.01))
+        assert.are.equal("one", timeline:lookup("one.mp3", 0).text_fragment)
+        assert.are.equal("two", timeline:lookup("one.mp3", 1).text_fragment)
+        assert.is_nil(timeline:lookup("one.mp3", 2))
+        assert.are.equal("three", timeline:lookup("one.mp3", 3).text_fragment)
+        assert.is_nil(timeline:lookup("one.mp3", 4))
+        assert.are.equal("other", timeline:lookup("two.mp3", 0).text_fragment)
+        assert.is_nil(timeline:lookup("unknown.mp3", 0))
+    end)
+
+    it("rejects non-monotonic clips within one resource", function()
+        local invalid_timeline, error_message = Timeline.new({
+            { audio_path = "one.mp3", clip_begin = 2, clip_end = 3 },
+            { audio_path = "one.mp3", clip_begin = 1, clip_end = 2 },
+        })
+        assert.is_nil(invalid_timeline)
+        assert.matches("non%-monotonic", error_message)
     end)
 end)
