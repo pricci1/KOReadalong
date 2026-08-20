@@ -52,6 +52,18 @@ end
 local MpvTransport = {}
 MpvTransport.__index = MpvTransport
 
+local DEFAULT_IO = {
+    close = function(fd)
+        return C.close(fd)
+    end,
+    recv = function(fd, buffer, length, flags)
+        return C.recv(fd, buffer, length, flags)
+    end,
+    send = function(fd, data, length, flags)
+        return C.send(fd, data, length, flags)
+    end,
+}
+
 local RETRYABLE_CONNECT_ERRORS = {
     EAGAIN = true,
     EALREADY = true,
@@ -69,7 +81,7 @@ end
 
 local function close_fd(self)
     if self.fd then
-        C.close(self.fd)
+        self.io.close(self.fd)
         self.fd = nil
     end
     self.connecting = false
@@ -85,6 +97,7 @@ function MpvTransport.new(options)
         tx_offset = 1,
         closed = false,
         retry_interval = options.retry_interval or 0.02,
+        io = options.io or DEFAULT_IO,
     }, MpvTransport)
 end
 
@@ -253,7 +266,7 @@ function MpvTransport:_flush(events)
     while self.tx_queue[1] do
         local data = self.tx_queue[1]
         local remaining = #data - self.tx_offset + 1
-        local written = C.send(
+        local written, send_error = self.io.send(
             self.fd,
             data:sub(self.tx_offset),
             remaining,
@@ -266,7 +279,7 @@ function MpvTransport:_flush(events)
                 self.tx_offset = 1
             end
         elseif written < 0 then
-            local error_number = ffi.errno()
+            local error_number = send_error or ffi.errno()
             if posix.is_errno(error_number, "EINTR") then
                 break
             elseif posix.is_errno(error_number, "EAGAIN") then
@@ -290,7 +303,12 @@ function MpvTransport:_read(events)
         return
     end
     for _ = 1, 32 do
-        local bytes = C.recv(self.fd, self.read_buffer, 8192, 0)
+        local bytes, recv_error = self.io.recv(
+            self.fd,
+            self.read_buffer,
+            8192,
+            0
+        )
         if bytes > 0 then
             local decoded, decode_error = self.codec:feed(
                 ffi.string(self.read_buffer, bytes)
@@ -308,7 +326,7 @@ function MpvTransport:_read(events)
             close_fd(self)
             return
         else
-            local error_number = ffi.errno()
+            local error_number = recv_error or ffi.errno()
             if posix.is_errno(error_number, "EINTR") then
                 break
             elseif posix.is_errno(error_number, "EAGAIN") then

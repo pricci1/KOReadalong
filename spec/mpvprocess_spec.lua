@@ -41,4 +41,34 @@ describe("production mpv process lifecycle", function()
         end
         process:cleanup()
     end)
+
+    it("escalates one process group from TERM to KILL after bounded deadlines", function()
+        local signals = {}
+        local process = MpvProcess.new{
+            term_timeout = 0.4,
+            kill_timeout = 0.4,
+            waitpid = function()
+                return 0
+            end,
+            kill = function(pid, signal)
+                signals[#signals + 1] = { pid = pid, signal = signal }
+                return 0
+            end,
+        }
+        process.started = true
+        process.pid = 31415
+
+        process:begin_close(10)
+        process:poll(10.39)
+        assert.are.same({}, signals)
+        process:poll(10.4)
+        assert.are.same({ { pid = -31415, signal = 15 } }, signals)
+        process:poll(10.79)
+        assert.are.equal(1, #signals)
+        process:poll(10.8)
+        assert.are.same({
+            { pid = -31415, signal = 15 },
+            { pid = -31415, signal = 9 },
+        }, signals)
+    end)
 end)

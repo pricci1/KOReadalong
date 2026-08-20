@@ -136,6 +136,12 @@ function MpvProcess.new(options)
         test_only = options.test_only == true,
         term_timeout = options.term_timeout or DEFAULT_TERM_TIMEOUT,
         kill_timeout = options.kill_timeout or DEFAULT_KILL_TIMEOUT,
+        waitpid = options.waitpid or function(pid, status, flags)
+            return C.waitpid(pid, status, flags)
+        end,
+        kill = options.kill or function(pid, signal)
+            return C.kill(pid, signal)
+        end,
         cleaned = false,
     }, MpvProcess)
 end
@@ -207,7 +213,7 @@ function MpvProcess:poll(now)
     end
 
     local status = ffi.new("int[1]")
-    local result = C.waitpid(self.pid, status, C.WNOHANG)
+    local result = self.waitpid(self.pid, status, C.WNOHANG)
     if result == self.pid then
         self.reaped = true
         self.status = process_status(status[0])
@@ -232,12 +238,12 @@ function MpvProcess:poll(now)
     if self.closing and not self.reaped then
         now = now or 0
         if not self.term_sent and now >= self.close_deadline then
-            C.kill(-self.pid, C.SIGTERM)
+            self.kill(-self.pid, C.SIGTERM)
             self.term_sent = true
             self.kill_deadline = now + self.kill_timeout
             events[#events + 1] = { kind = "term_sent" }
         elseif self.term_sent and not self.kill_sent and now >= self.kill_deadline then
-            C.kill(-self.pid, C.SIGKILL)
+            self.kill(-self.pid, C.SIGKILL)
             self.kill_sent = true
             self.kill_deadline = now + self.kill_timeout
             events[#events + 1] = { kind = "kill_sent" }

@@ -55,8 +55,11 @@ function MpvAudio.new(options)
         state = MpvAudio.STATES.STARTUP,
         generation = 0,
         next_request_id = 0,
+        next_observer_id = 0,
         pending_requests = {},
         queued_commands = {},
+        observers_by_id = {},
+        active_observer_ids = {},
         status = {
             state = MpvAudio.STATES.STARTUP,
             position = nil,
@@ -74,7 +77,7 @@ function MpvAudio.new(options)
 
     self.poll_action = function()
         self.poll_scheduled = false
-        if not self.closed then
+        if not self.closed and not self.abort_started then
             self:_poll()
             self:_schedule_poll()
         end
@@ -92,7 +95,7 @@ function MpvAudio:_set_state(state)
 end
 
 function MpvAudio:_schedule_poll()
-    if self.closed or self.poll_scheduled then
+    if self.closed or self.abort_started or self.poll_scheduled then
         return
     end
     self.poll_scheduled = true
@@ -108,11 +111,12 @@ function MpvAudio:_schedule_teardown()
 end
 
 function MpvAudio:_fail(error_message)
-    if self.closed then
+    if self.closed or self.state == MpvAudio.STATES.ERROR then
         return
     end
     self.status.error = tostring(error_message)
     self:_set_state(MpvAudio.STATES.ERROR)
+    self:_abort_session()
 end
 
 function MpvAudio:_abort_session()
@@ -120,6 +124,10 @@ function MpvAudio:_abort_session()
         return
     end
     self.abort_started = true
+    if self.poll_scheduled then
+        self.timer:unschedule(self.poll_action)
+        self.poll_scheduled = false
+    end
     self.connected = false
     invoke(self.transport, "close")
     if self.process then
@@ -228,10 +236,18 @@ end
 
 function MpvAudio:_send_observers()
     for _, property in ipairs(OBSERVED_PROPERTIES) do
+        self.next_observer_id = self.next_observer_id + 1
+        local observer_id = self.next_observer_id
+        self.observers_by_id[observer_id] = {
+            generation = self.generation,
+            property = property,
+        }
+        self.active_observer_ids[property] = observer_id
         local request_id, send_error = self:_next_request(
-            { "observe_property", self.next_request_id + 1, property },
+            { "observe_property", observer_id, property },
             "observe",
-            self.generation
+            self.generation,
+            { observer_id = observer_id }
         )
         if not request_id then
             self:_fail(send_error)
@@ -242,6 +258,22 @@ function MpvAudio:_send_observers()
 end
 
 function MpvAudio:_send_pending_commands()
+    if self.pending_load and next(self.active_observer_ids) then
+        local old_observer_ids = self.active_observer_ids
+        self.active_observer_ids = {}
+        for _, observer_id in pairs(old_observer_ids) do
+            local request_id, send_error = self:_next_request(
+                { "unobserve_property", observer_id },
+                "unobserve",
+                self.generation - 1
+            )
+            if not request_id then
+                self:_fail(send_error)
+                return nil
+            end
+        end
+    end
+
     if self.pending_load then
         local pending_load = self.pending_load
         self.pending_load = nil
@@ -277,13 +309,7 @@ function MpvAudio:_send_pending_commands()
 end
 
 function MpvAudio:_on_connected(event)
-    if event.generation and event.generation ~= self.generation then
-        return
-    end
     self.connected = true
-    if not self:_send_observers() then
-        return
-    end
     self:_send_pending_commands()
 end
 
@@ -306,7 +332,12 @@ function MpvAudio:_reconcile()
 end
 
 function MpvAudio:_on_property_change(message)
-    if message.generation and message.generation ~= self.generation then
+    if self.closed or self.state == MpvAudio.STATES.ERROR then
+        return
+    end
+    local observer = self.observers_by_id[message.id]
+    if not observer or observer.generation ~= self.generation
+        or observer.property ~= message.name then
         return
     end
     local property = message.name
@@ -323,13 +354,28 @@ function MpvAudio:_on_property_change(message)
 end
 
 function MpvAudio:_on_event(message)
-    if message.generation and message.generation ~= self.generation then
+    if self.closed or self.state == MpvAudio.STATES.ERROR then
         return
     end
     if message.event == "playback-restart" then
         self:_reconcile()
+    elseif message.event == "file-loaded" then
+        if not self.awaiting_file_loaded then
+            return
+        end
+        self.awaiting_file_loaded = false
+        self.file_loaded_generation = self.generation
+        if not self:_send_observers() then
+            self:_abort_session()
+        end
     elseif message.event == "end-file" then
         local reason = message.reason or (message.data and message.data.reason)
+        if self.awaiting_file_loaded then
+            if reason == "error" then
+                self:_fail("mpv media error")
+            end
+            return
+        end
         if reason == "eof" then
             if self.status.duration then
                 self.status.position = self.status.duration
@@ -349,7 +395,8 @@ function MpvAudio:_on_reply(message)
         return
     end
     self.pending_requests[message.request_id] = nil
-    if request.generation ~= self.generation then
+    if self.closed or self.state == MpvAudio.STATES.ERROR
+        or request.generation ~= self.generation then
         return
     end
     if message.error and message.error ~= "success" then
@@ -387,9 +434,6 @@ function MpvAudio:_on_message(message)
 end
 
 function MpvAudio:_on_transport_event(event)
-    if event.generation and event.generation ~= self.generation then
-        return
-    end
     if event.kind == "connected" then
         self:_on_connected(event)
     elseif event.kind == "message" then
@@ -402,6 +446,15 @@ function MpvAudio:_on_transport_event(event)
         self.connected = false
         self:_fail(event.error)
         self:_abort_session()
+    end
+end
+
+function MpvAudio:_poll_transport(now)
+    local transport_events = invoke(self.transport, "poll", now)
+    if type(transport_events) == "table" then
+        for _, event in ipairs(transport_events) do
+            self:_on_transport_event(event)
+        end
     end
 end
 
@@ -421,12 +474,7 @@ function MpvAudio:_poll()
         end
     end
 
-    local transport_events = invoke(self.transport, "poll", now)
-    if type(transport_events) == "table" then
-        for _, event in ipairs(transport_events) do
-            self:_on_transport_event(event)
-        end
-    end
+    self:_poll_transport(now)
 
     if self.startup_deadline and not self.connected and now >= self.startup_deadline
         and self.state ~= MpvAudio.STATES.ERROR then
@@ -442,6 +490,12 @@ function MpvAudio:load(local_file_path)
     if type(local_file_path) ~= "string" or local_file_path == "" then
         return nil, "audio path must be a non-empty local path"
     end
+    if self.abort_started then
+        return nil, "mpv audio adapter session has failed"
+    end
+    if self.state == MpvAudio.STATES.LOADING then
+        return nil, "audio replacement is still loading"
+    end
     self.generation = self.generation + 1
     self.status.position = 0
     self.status.duration = nil
@@ -449,6 +503,8 @@ function MpvAudio:load(local_file_path)
     self.status.idle_active = nil
     self.status.error = nil
     self.load_acknowledged = false
+    self.awaiting_file_loaded = true
+    self.file_loaded_generation = nil
     self.load_request_id = nil
     self:_set_state(MpvAudio.STATES.LOADING)
 
@@ -477,6 +533,9 @@ function MpvAudio:play()
     if self.closed then
         return nil, "mpv audio adapter is closed"
     end
+    if self.abort_started then
+        return nil, "mpv audio adapter session has failed"
+    end
     local ok, error_message = self:_queue_or_send(
         { "set_property", "pause", false },
         "play"
@@ -492,6 +551,9 @@ MpvAudio.resume = MpvAudio.play
 function MpvAudio:pause()
     if self.closed then
         return nil, "mpv audio adapter is closed"
+    end
+    if self.abort_started then
+        return nil, "mpv audio adapter session has failed"
     end
     if not self.connected then
         self.queued_commands[#self.queued_commands + 1] = {
@@ -522,6 +584,9 @@ function MpvAudio:seek(seconds)
     if self.closed then
         return nil, "mpv audio adapter is closed"
     end
+    if self.abort_started then
+        return nil, "mpv audio adapter session has failed"
+    end
     if type(seconds) ~= "number" or seconds ~= seconds or seconds < 0 then
         return nil, "seek position must be a non-negative number"
     end
@@ -538,6 +603,9 @@ end
 function MpvAudio:stop()
     if self.closed then
         return nil, "mpv audio adapter is closed"
+    end
+    if self.abort_started then
+        return nil, "mpv audio adapter session has failed"
     end
     local ok, error_message = self:_queue_or_send({ "stop" }, "stop")
     if not ok then
@@ -558,7 +626,7 @@ end
 
 function MpvAudio:_poll_teardown()
     local now = self.clock()
-    invoke(self.transport, "poll", now)
+    self:_poll_transport(now)
     local process_events = invoke(self.process, "poll", now)
     local process_done = not self.process
     if self.process then

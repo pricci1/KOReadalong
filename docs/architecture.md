@@ -131,6 +131,14 @@ below `sockaddr_un.sun_path`, and the adapter cleans the socket and directory
 after waitpid reaping. The process has an exec-status pipe, a tracked PID and
 process group, and bounded quit/close, SIGTERM, then SIGKILL teardown.
 
+Each loaded resource gets fresh mpv `observe_property` IDs. Replacement first
+unobserves the old IDs, queues `loadfile ... replace`, and waits for mpv's
+`file-loaded` event before observing the new resource. During that boundary,
+old `end-file` events are ignored and property changes are accepted only when
+their real mpv observer ID belongs to the current generation. A second `load`
+while the adapter is still loading is rejected rather than overlapping two
+unresolved file boundaries.
+
 The adapter receives an already-materialized local audio path. It never opens
 TCP, parses stderr, injects keyboard input, or extracts EPUB resources. The
 integration test alone opts into `--ao=null` as a clocked test sink; production
