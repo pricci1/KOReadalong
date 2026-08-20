@@ -110,11 +110,45 @@ CSS, which would rerender on narration cadence.
 
 Dynamic read-along marks should be a registered reader view module with a `paintTo` method. Persisted highlights are intentionally avoided because narration state must not enter KOReader's annotations/bookmarks/export systems. Text anchors are stored as XPointers; rendered boxes are display-dependent cache entries only.
 
-## Audio direction
+## Audio adapters
 
-KinAMP demonstrates the right Kindle boundary: a small native daemon owns decoding/audio output, while Lua sends FIFO commands and reads atomic status snapshots. Its Kindle Bluetooth adapter uses Lab126 LIPC and must remain capability-gated. On desktop, KinAMP can use GStreamer 1.0 `autoaudiosink`, but its current launcher/build are not turnkey and link unnecessary GTK/XML dependencies.
+The desktop adapter is `mpvaudio.lua`. It owns one `mpv` process per adapter
+session and exposes the platform-neutral `load`, `play`/`resume`, `pause`,
+`seek`, `stop`, `getStatus`, and idempotent `close` contract. Its states are
+`startup`, `idle`, `loading`, `playing`, `paused`, `ended`, `error`, and
+`closed`. Loading is not considered successful until observed mpv properties
+confirm a decoded, non-idle resource; `end-file`, property changes, process
+exit, and IPC failures reconcile the status.
 
-The MVP should prove the parser, timeline, and visual synchronization on Linux before selecting whether to adapt KinAMP's GPLv3 daemon or implement a smaller protocol-compatible companion. LARK's GTK UI and direct Kindle service manipulation are not appropriate plugin dependencies.
+The process uses the `mpv` package installed by `.agents/setup`, argv-only
+`execvp`, `--no-config`, idle/no-video/no-terminal mode, disabled input
+bindings, a private Unix-domain JSON IPC socket, and
+`--audio-fallback-to-null=no`. The transport keeps a newline-delimited JSON
+connection with nonblocking connect, reads, and writes; UI polling is scheduled
+through KOReader's `UIManager:scheduleIn` at roughly 180 ms and never waits on
+IPC. A per-session `mkdtemp` directory is mode 0700, the socket path is bounded
+below `sockaddr_un.sun_path`, and the adapter cleans the socket and directory
+after waitpid reaping. The process has an exec-status pipe, a tracked PID and
+process group, and bounded quit/close, SIGTERM, then SIGKILL teardown.
+
+Each loaded resource gets fresh mpv `observe_property` IDs. Replacement first
+unobserves the old IDs, queues `loadfile ... replace`, and waits for mpv's
+`file-loaded` event before observing the new resource. During that boundary,
+old `end-file` events are ignored and property changes are accepted only when
+their real mpv observer ID belongs to the current generation. A second `load`
+while the adapter is still loading is rejected rather than overlapping two
+unresolved file boundaries.
+
+The adapter receives an already-materialized local audio path. It never opens
+TCP, parses stderr, injects keyboard input, or extracts EPUB resources. The
+integration test alone opts into `--ao=null` as a clocked test sink; production
+does not add a null sink and reports a real no-sink failure. Deterministic
+tests inject process, transport, and timer boundaries; the coordinator and UI
+controls remain outside this slice.
+
+Kindle will implement the same high-level audio contract separately behind its
+own capability-gated daemon/Bluetooth adapter. Desktop mpv behavior is not a
+Kindle dependency.
 
 ## Tooling
 
@@ -129,6 +163,6 @@ The MVP should prove the parser, timeline, and visual synchronization on Linux b
 
 1. Parse package metadata, SMIL clocks, nested sequences, and Storyteller fixtures.
 2. Resolve fragment IDs to KOReader text anchors and paint a static ephemeral underline.
-3. Implement desktop playback and synchronize the active clip.
-4. Add navigation, playback controls, state cleanup, and representative rerender/page tests.
+3. Connect the desktop adapter to playback and synchronize the active clip.
+4. Add navigation, playback controls, and representative rerender/page tests.
 5. Implement and test the Kindle audio/Bluetooth adapter on supported hardware.

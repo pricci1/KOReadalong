@@ -11,11 +11,16 @@ Fresh Amp orbs are prepared by `.agents/setup`. On another Debian-based machine,
 ```sh
 ./.agents/setup
 make check
+make mpv-integration
 make run
 ```
 
 `make run` launches the checksum-pinned KOReader desktop runtime with `koreadalong.koplugin` linked into its plugin directory. `make run-headless` provides a short Xvfb smoke run for environments without a display.
 
 The project follows KOReader's upstream Luacheck configuration. LuaLS settings are included for editor assistance, but KOReader does not define an authoritative Lua type-checking gate or autoformatter.
+
+`make mpv-integration` runs the production LuaJIT mpv process and Unix IPC
+transport against a temporary WAV fixture. It uses `--ao=null` only for this
+test, so it is suitable for headless development environments.
 
 See [docs/architecture.md](docs/architecture.md) for the MVP boundaries and compatibility findings.
