@@ -143,8 +143,9 @@ The adapter receives an already-materialized local audio path. It never opens
 TCP, parses stderr, injects keyboard input, or extracts EPUB resources. The
 integration test alone opts into `--ao=null` as a clocked test sink; production
 does not add a null sink and reports a real no-sink failure. Deterministic
-tests inject process, transport, and timer boundaries; the coordinator and UI
-controls remain outside this slice.
+tests inject process, transport, and timer boundaries. The playback coordinator
+consumes only the high-level adapter contract and owns resource transitions,
+timeline synchronization, and the compact reader controls.
 
 An adapter error is terminal for the current document session: the compact
 menu disables both playback actions and reports that the document must be

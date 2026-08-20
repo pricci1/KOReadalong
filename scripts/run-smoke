@@ -2,28 +2,28 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec 9>"$repo_root/.cache/koreadalong-smoke.lock"
+if ! flock -n 9; then
+    printf 'another KoReadalong smoke integration is already running\n' >&2
+    exit 1
+fi
+
 smoke_root="$repo_root/.cache/koreadalong-smoke"
 runtime_plugins="$repo_root/.cache/koreader-v2026.07.1/lib/koreader/plugins"
 plugin_link="$runtime_plugins/koreadalongsmoke.koplugin"
 epub="$smoke_root/synthetic.epub"
 run_log="$smoke_root/run.log"
-preexisting_dirs="$(find /tmp -maxdepth 1 -type d -name 'koreadalong-*' -print 2>/dev/null || true)"
-
-is_preexisting_dir() {
-    printf '%s\n' "$preexisting_dirs" | grep -Fqx -- "$1"
-}
-
-remove_new_temp_dirs() {
-    while IFS= read -r path; do
-        if [[ -n "$path" ]] && ! is_preexisting_dir "$path"; then
-            rm -rf -- "$path"
-        fi
-    done < <(find /tmp -maxdepth 1 -type d -name 'koreadalong-*' -print 2>/dev/null)
-}
+owned_dirs="$smoke_root/owned-dirs"
 
 cleanup() {
     rm -f "$plugin_link"
-    remove_new_temp_dirs
+    if [[ -f "$owned_dirs" ]]; then
+        while IFS= read -r path; do
+            if [[ "$path" == /tmp/koreadalong-* ]]; then
+                rm -rf -- "$path"
+            fi
+        done < "$owned_dirs"
+    fi
     rm -rf "$smoke_root"
 }
 trap cleanup EXIT INT TERM
@@ -188,6 +188,13 @@ function Smoke:onReaderReady()
         return
     end
 
+    local owned_dirs = assert(io.open(
+        assert(os.getenv("KOREADALONG_SMOKE_OWNED_DIRS")),
+        "w"
+    ))
+    owned_dirs:write(materializer.session_dir, "\n", process.session_dir, "\n")
+    owned_dirs:close()
+
     UIManager:scheduleIn(1.5, function()
         local status = adapter:getStatus()
         if status.state ~= "playing" then
@@ -248,7 +255,8 @@ mkdir -p "$runtime_plugins"
 ln -sfn "$smoke_root/koreadalongsmoke.koplugin" "$plugin_link"
 
 status=0
-timeout 8s xvfb-run -a "$repo_root/scripts/run-koreader" -d "$epub" \
+KOREADALONG_SMOKE_OWNED_DIRS="$owned_dirs" \
+    timeout 8s xvfb-run -a "$repo_root/scripts/run-koreader" -d "$epub" \
     >"$run_log" 2>&1 || status=$?
 cat "$run_log"
 if [[ "$status" -ne 0 ]]; then
@@ -262,10 +270,9 @@ grep -F "SMOKE_EOF state=ended audio_removed=true" "$run_log" >/dev/null
 grep -F "SMOKE_CLOSE audio_dir_gone=true coordinator_state=closed" "$run_log" >/dev/null
 grep -F "SMOKE_CLEANUP mpv_done=true mpv_dir_gone=true" "$run_log" >/dev/null
 
-leftover_dirs="$(find /tmp -maxdepth 1 -type d -name 'koreadalong-*' -print 2>/dev/null)"
 while IFS= read -r path; do
-    if [[ -n "$path" ]] && ! is_preexisting_dir "$path"; then
-        printf 'smoke integration left temporary directory: %s\n' "$path" >&2
+    if [[ -n "$path" ]] && [[ -e "$path" ]]; then
+        printf 'smoke integration left owned temporary directory: %s\n' "$path" >&2
         exit 1
     fi
-done <<< "$leftover_dirs"
+done < "$owned_dirs"

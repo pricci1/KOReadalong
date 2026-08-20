@@ -520,6 +520,11 @@ describe("playback coordinator", function()
         assert.are.equal("closed", coordinator:getState())
         assert.is_not_nil(coordinator.materialized_path)
         assert.matches("cleanup failed", coordinator.cleanup_error)
+
+        materializer.fail_cleanup = false
         assert.is_true(coordinator:close())
+        assert.are.equal(2, materializer.cleaned)
+        assert.is_nil(coordinator.materialized_path)
+        assert.is_nil(coordinator.cleanup_error)
     end)
 end)

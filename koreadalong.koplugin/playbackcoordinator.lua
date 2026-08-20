@@ -586,6 +586,16 @@ end
 
 function PlaybackCoordinator:close()
     if self.closed then
+        if self.cleanup_error then
+            local cleaned, cleanup_error = invoke(self.materializer, "cleanup")
+            if cleaned then
+                self.materialized_path = nil
+                self.current_audio_path = nil
+                self.cleanup_error = nil
+            else
+                self.cleanup_error = cleanup_error
+            end
+        end
         return true
     end
     -- Invalidate first: callbacks already dequeued by UIManager must become
