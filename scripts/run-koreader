@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+koreader="$repo_root/.cache/koreader/bin/koreader"
+
+if [[ ! -x "$koreader" ]]; then
+    printf 'KOReader runtime is missing; run ./.agents/setup first.\n' >&2
+    exit 1
+fi
+
+ln -sfn "$repo_root/koreadalong.koplugin" \
+    "$repo_root/.cache/koreader/lib/koreader/plugins/koreadalong.koplugin"
+
+exec "$koreader" "$@"

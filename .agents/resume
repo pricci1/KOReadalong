@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+koreader_dir="$repo_root/.cache/koreader"
+
+if [[ -d "$koreader_dir/lib/koreader/plugins" ]]; then
+    ln -sfn "$repo_root/koreadalong.koplugin" "$koreader_dir/lib/koreader/plugins/koreadalong.koplugin"
+fi
+
+printf 'KoReadalong orb environment ready.\n'
