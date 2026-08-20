@@ -293,6 +293,33 @@ describe("playback coordinator", function()
         assert.are.equal("two", resolver.calls[1].next_clip.text_fragment)
     end)
 
+    it("rejects stop during loading and closes the unresolved session safely", function()
+        local coordinator, scheduler, adapter, materializer =
+            make_fixture(clips_fixture())
+        assert.is_true(coordinator:start())
+        assert.are.equal("loading", coordinator:getState())
+        assert.is_false(coordinator:isStopEnabled())
+
+        local stopped, stop_error = coordinator:stop()
+        assert.is_nil(stopped)
+        assert.matches("still loading", stop_error)
+        assert.are.equal("loading", coordinator:getState())
+        assert.are.equal(0, adapter.stops)
+        assert.is_not_nil(scheduler.tasks[coordinator.poll_action])
+
+        assert.is_true(coordinator:close())
+        assert.are.equal("closed", coordinator:getState())
+        assert.are.equal(0, adapter.stops)
+        assert.are.equal(1, adapter.closes)
+        assert.are.equal(1, materializer.cleaned)
+        assert.is_nil(scheduler.tasks[coordinator.poll_action])
+
+        assert.is_true(coordinator:close())
+        assert.are.equal(1, adapter.closes)
+        assert.are.equal(1, materializer.cleaned)
+        assert.is_nil(scheduler.tasks[coordinator.poll_action])
+    end)
+
     it("moves through same-resource clips, clears gaps, and caches ranges", function()
         local coordinator, scheduler, adapter, _, resolver, overlay =
             make_fixture(clips_fixture())
