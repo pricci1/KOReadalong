@@ -461,13 +461,32 @@ local function parse_package_metadata(opf_xml, opf_path)
     end
     local items_by_id = {}
     local overlay_items_by_id = {}
+    local content_paths_by_href = {}
     for _, item in ipairs(manifest.children) do
         if item.name == "item" then
             local attributes = item.attributes
             if attributes.id then
+                if items_by_id[attributes.id] then
+                    return nil, "manifest has duplicate item id '" .. attributes.id
+                        .. "'"
+                end
                 items_by_id[attributes.id] = attributes
             end
             if attributes["media-type"] == "application/xhtml+xml" then
+                if attributes.href and attributes.href ~= "" then
+                    local content_path, content_path_error = resolve_reference(
+                        opf_path,
+                        attributes.href
+                    )
+                    if not content_path then
+                        return nil, content_path_error
+                    end
+                    if content_paths_by_href[content_path] then
+                        return nil, "manifest has duplicate XHTML content href '"
+                            .. content_path .. "'"
+                    end
+                    content_paths_by_href[content_path] = attributes.id or true
+                end
                 if attributes["media-overlay"] then
                     if not attributes.id then
                         return nil, "XHTML overlay item has no manifest id"
@@ -482,6 +501,10 @@ local function parse_package_metadata(opf_xml, opf_path)
         return nil, "OPF document has no spine"
     end
     local overlay_documents = {}
+    -- CRe counts every preceding spine itemref whose manifest item has a
+    -- non-empty id and href.  linear="no", non-overlay, unsupported, and
+    -- repeated valid itemrefs still consume a slot.
+    local spine_index = 0
     for _, itemref in ipairs(spine.children) do
         if itemref.name == "itemref" then
             local idref = itemref.attributes.idref
@@ -492,8 +515,12 @@ local function parse_package_metadata(opf_xml, opf_path)
             if not content then
                 return nil, "spine itemref references missing manifest item '" .. idref .. "'"
             end
+            local document_spine_index = spine_index
+            if content.id and content.id ~= "" and content.href and content.href ~= "" then
+                spine_index = spine_index + 1
+            end
             if overlay_items_by_id[idref] then
-                if not content.href then
+                if not content.href or content.href == "" then
                     return nil, "XHTML item '" .. (content.id or "?") .. "' has no href"
                 end
                 local content_path, content_path_error = resolve_reference(
@@ -509,7 +536,7 @@ local function parse_package_metadata(opf_xml, opf_path)
                         .. "' references missing media-overlay '"
                         .. content["media-overlay"] .. "'"
                 end
-                if not smil_item.href then
+                if not smil_item.href or smil_item.href == "" then
                     return nil, "media-overlay item '" .. content["media-overlay"]
                         .. "' has no href"
                 end
@@ -523,6 +550,7 @@ local function parse_package_metadata(opf_xml, opf_path)
                 overlay_documents[#overlay_documents + 1] = {
                     path = smil_path,
                     content_path = content_path,
+                    spine_index = document_spine_index,
                 }
             end
         end
@@ -557,6 +585,7 @@ function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
             return nil, "invalid SMIL '" .. document.path .. "': " .. smil_error
         end
         for _, clip in ipairs(smil_clips) do
+            clip.spine_index = document.spine_index
             clips[#clips + 1] = clip
         end
     end

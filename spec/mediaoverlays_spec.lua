@@ -11,12 +11,16 @@ local OPF = [[
         <item id="other" href="text/other.xhtml" media-type="application/xhtml+xml" media-overlay="other-mo"/>
         <item id="other-mo" href="media/other.smil" media-type="application/smil+xml"/>
         <item id="cover" href="text/cover.xhtml" media-type="application/xhtml+xml"/>
+        <item id="missing-href" media-type="application/octet-stream"/>
+        <item id="unsupported" href="misc/unsupported.bin" media-type="application/octet-stream"/>
         <item id="appendix" href="text/appendix.xhtml" media-type="application/xhtml+xml" media-overlay="appendix-mo"/>
         <item id="appendix-mo" href="media/appendix.smil" media-type="application/smil+xml"/>
     </manifest>
     <spine>
         <itemref idref="other"/>
-        <itemref idref="cover"/>
+        <itemref idref="cover" linear="no"/>
+        <itemref idref="missing-href"/>
+        <itemref idref="unsupported"/>
         <itemref idref="chapter"/>
     </spine>
 </package>
@@ -92,6 +96,7 @@ describe("EPUB media overlays", function()
             audio_path = "book/audio/other.mp3",
             clip_begin = 62.25,
             clip_end = 63,
+            spine_index = 0,
         }, clips[1])
         assert.are.same({
             text_path = "book/text/chapter.xhtml",
@@ -99,9 +104,12 @@ describe("EPUB media overlays", function()
             audio_path = "book/audio/part-one.mp3",
             clip_begin = 1.5,
             clip_end = 2,
+            spine_index = 3,
         }, clips[2])
         assert.are.equal("second", clips[3].text_fragment)
+        assert.are.equal(3, clips[3].spine_index)
         assert.are.equal("book/audio/part-two.mp3", clips[4].audio_path)
+        assert.are.equal(3, clips[4].spine_index)
     end)
 
     it("normalizes relative paths without a ZIP-root assumption", function()
@@ -146,6 +154,59 @@ describe("EPUB media overlays", function()
         )
         assert.is_nil(clips)
         assert.matches("missing manifest item", error_message)
+    end)
+
+    it("rejects duplicate manifest IDs and XHTML content hrefs", function()
+        local duplicate_id = OPF:gsub(
+            '<item id="appendix"',
+            '<item id="chapter"'
+        )
+        local clips, error_message = MediaOverlays.parse(
+            duplicate_id,
+            "book/package.opf",
+            {
+                ["book/media/chapter.smil"] = CHAPTER_SMIL,
+                ["book/media/other.smil"] = OTHER_SMIL,
+            }
+        )
+        assert.is_nil(clips)
+        assert.matches("duplicate item id", error_message)
+
+        local duplicate_href = OPF:gsub(
+            'href="text/appendix.xhtml"',
+            'href="text/chapter.xhtml"'
+        )
+        clips, error_message = MediaOverlays.parse(
+            duplicate_href,
+            "book/package.opf",
+            {
+                ["book/media/chapter.smil"] = CHAPTER_SMIL,
+                ["book/media/other.smil"] = OTHER_SMIL,
+                ["book/media/appendix.smil"] = CHAPTER_SMIL,
+            }
+        )
+        assert.is_nil(clips)
+        assert.matches("duplicate XHTML content href", error_message)
+    end)
+
+    it("counts repeated valid spine itemrefs independently", function()
+        local repeated = OPF:gsub(
+            '<itemref idref="chapter"/>',
+            '<itemref idref="other"/><itemref idref="chapter"/>'
+        )
+        local clips, error_message = MediaOverlays.parse(
+            repeated,
+            "book/package.opf",
+            {
+                ["book/media/chapter.smil"] = CHAPTER_SMIL,
+                ["book/media/other.smil"] = OTHER_SMIL,
+            }
+        )
+        assert.is_nil(error_message)
+        assert.are.equal(5, #clips)
+        assert.are.equal(0, clips[1].spine_index)
+        assert.are.equal(4, clips[3].spine_index)
+        assert.are.equal(4, clips[5].spine_index)
     end)
 end)
 
