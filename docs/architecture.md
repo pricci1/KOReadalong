@@ -50,10 +50,17 @@ local clips, error_message = MediaOverlays.parse(
 )
 ```
 
-Each returned clip has `text_path`, `text_fragment`, `audio_path`,
-`clip_begin`, and `clip_end`. Paths are normalized relative to the containing
+Each returned clip has `text_path`, `text_fragment`, `spine_index`,
+`audio_path`, `clip_begin`, and `clip_end`. `spine_index` is the exact
+zero-based index CRe assigns after filtering the OPF spine: every preceding
+itemref resolving to a manifest item with a non-empty `id` and `href` counts,
+including `linear="no"`, non-overlay, unsupported or unavailable content, and
+repeated valid entries. Unresolved itemrefs and manifest items missing an `id`
+or `href` do not count. Paths are normalized relative to the containing
 document and remain ZIP-entry paths; the parser does not assume an `OEBPS/`
-root. A parse failure returns `nil, error_message`.
+root. Repeated normalized content hrefs in the spine are rejected as
+unsupported because CRe's path substitution cannot provide an exact mapping.
+A parse failure returns `nil, error_message`.
 
 Production integration uses the same parser through an archive-entry callback:
 
@@ -72,6 +79,29 @@ Construction groups clips by `audio_path` and rejects non-monotonic clip clocks
 within a resource. Lookup uses binary search and half-open clip intervals,
 `[clip_begin, clip_end)`: a shared boundary selects the following clip, a gap
 returns `nil`, and an unknown resource returns `nil`.
+
+## Current fragment-resolution slice
+
+`fragmentresolver.lua` is a platform-neutral, plugin-only resolver for the
+current Storyteller ID-fragment form. It builds
+`#_doc_fragment_<spine_index>_<text_fragment>` and uses only the injected CRe
+operations `isXPointerInDocument`, `getTextFromXPointer`,
+`getNextVisibleChar`, `getTextFromXPointers`, and `compareXPointers`.
+
+The resolver supports ordinary unique sentence/word IDs whose target has
+non-empty, visibly rendered inline text. It accepts a range only when the
+recovered text is an exact byte-for-byte match, with ordered XPointers and an
+optional next-target boundary. It does not normalize text, search globally,
+or approximate a match. Web Text Fragments, empty/whitespace, hidden,
+image-only, duplicate/ambiguous, ruby, block, and generated-content targets
+are outside this boundary and fail closed. The parser rejects duplicate
+manifest IDs and duplicate XHTML content hrefs rather than claiming an exact
+CRe mapping.
+
+This slice deliberately does not add a native CRe node-range binding. If
+differential fixtures ever show that this exact invariant accepts a wrongly
+bounded range, native node-range binding is the fallback rather than dynamic
+CSS, which would rerender on narration cadence.
 
 ## KOReader integration
 
