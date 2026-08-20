@@ -68,13 +68,37 @@ local function boxes_equal(left, right)
     return true
 end
 
-local function dirty_region(geom, old_boxes, new_boxes)
-    local boxes = {}
-    for _, box in ipairs(old_boxes) do
-        boxes[#boxes + 1] = box
+local function line_thickness(size)
+    return math.max(1, math.floor(size.line.medium))
+end
+
+local function underline_rect(box, thickness)
+    -- CRe returns window-space boxes. Match KOReader's underscore baseline;
+    -- a medium line may occupy pixels just below the text box, so dirtying
+    -- must use these exact painted rectangles rather than the source boxes.
+    return {
+        x = math.floor(box.x),
+        y = math.floor(box.y + box.h - 1),
+        w = math.floor(box.w),
+        h = thickness,
+    }
+end
+
+local function underline_rects(boxes, thickness)
+    local rects = {}
+    for index, box in ipairs(boxes) do
+        rects[index] = underline_rect(box, thickness)
     end
-    for _, box in ipairs(new_boxes) do
-        boxes[#boxes + 1] = box
+    return rects
+end
+
+local function dirty_region(geom, old_rects, new_rects)
+    local boxes = {}
+    for _, rect in ipairs(old_rects) do
+        boxes[#boxes + 1] = rect
+    end
+    for _, rect in ipairs(new_rects) do
+        boxes[#boxes + 1] = rect
     end
     if #boxes == 0 then
         return nil
@@ -127,7 +151,10 @@ function UnderlineOverlay:register(view)
 end
 
 function UnderlineOverlay:_dirty(old_boxes, new_boxes)
-    local region = dirty_region(self.geom, old_boxes, new_boxes)
+    local thickness = line_thickness(self.size)
+    local old_rects = underline_rects(old_boxes, thickness)
+    local new_rects = underline_rects(new_boxes, thickness)
+    local region = dirty_region(self.geom, old_rects, new_rects)
     if region and self.ui_manager and type(self.ui_manager.setDirty) == "function" then
         self.ui_manager:setDirty(self.dialog, "ui", region)
     end
@@ -209,20 +236,19 @@ function UnderlineOverlay:refresh()
     return true
 end
 
-function UnderlineOverlay:paintTo(bb, x, y)
+function UnderlineOverlay:paintTo(bb, _x, _y)
     if not self.active then
         return
     end
 
-    x = x or 0
-    y = y or 0
-    local thickness = math.max(1, math.floor(self.size.line.medium))
+    local thickness = line_thickness(self.size)
     for _, box in ipairs(self.boxes) do
+        local rect = underline_rect(box, thickness)
         bb:paintRect(
-            math.floor(x + box.x),
-            math.floor(y + box.y + box.h - thickness),
-            math.floor(box.w),
-            thickness,
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
             self.blitbuffer.COLOR_BLACK
         )
     end

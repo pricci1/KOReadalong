@@ -129,7 +129,7 @@ describe("ephemeral read-along underline overlay", function()
         overlay:refresh()
         assert.are.same({}, overlay.boxes)
         assert.are.equal(1, #dirty)
-        assert.are.same({ x = 2, y = 3, w = 10, h = 12 }, dirty[1].region)
+        assert.are.same({ x = 2, y = 14, w = 10, h = 2 }, dirty[1].region)
     end)
 
     it("clears old display for nil and invalid ranges", function()
@@ -153,9 +153,9 @@ describe("ephemeral read-along underline overlay", function()
         assert.are.equal(0, #dirty)
     end)
 
-    it("dirties the union of old and new boxes", function()
+    it("dirties the union of old and new painted line regions", function()
         local current_boxes = { { x = 1, y = 2, w = 3, h = 4 } }
-        local overlay, _, _, dirty = make_fixture{
+        local overlay, _, _, dirty, _, paints, bb = make_fixture{
             visible = { old0 = true, old1 = true, new0 = true, new1 = true },
             boxes = function(pos0)
                 if pos0 == "old0" then
@@ -166,9 +166,30 @@ describe("ephemeral read-along underline overlay", function()
         }
         overlay:setRange("old0", "old1")
         clear_table(dirty)
+        overlay:paintTo(bb, 100, 200)
+        local old_line = paints[1]
+        clear_table(paints)
         overlay:setRange("new0", "new1")
+        overlay:paintTo(bb, 100, 200)
+        local new_line = paints[1]
         assert.are.equal(1, #dirty)
-        assert.are.same({ x = 1, y = 2, w = 14, h = 24 }, dirty[1].region)
+        assert.are.same({ x = 1, y = 5, w = 14, h = 22 }, dirty[1].region)
+        assert.is_true(
+            dirty[1].region.x <= old_line.x
+                and dirty[1].region.y <= old_line.y
+                and dirty[1].region.x + dirty[1].region.w
+                    >= old_line.x + old_line.w
+                and dirty[1].region.y + dirty[1].region.h
+                    >= old_line.y + old_line.h
+        )
+        assert.is_true(
+            dirty[1].region.x <= new_line.x
+                and dirty[1].region.y <= new_line.y
+                and dirty[1].region.x + dirty[1].region.w
+                    >= new_line.x + new_line.w
+                and dirty[1].region.y + dirty[1].region.h
+                    >= new_line.y + new_line.h
+        )
     end)
 
     it("does not dirty an empty unchanged cache", function()
@@ -180,7 +201,7 @@ describe("ephemeral read-along underline overlay", function()
         assert.are.equal(0, #dirty)
     end)
 
-    it("paints exact black underline rectangles with offsets", function()
+    it("paints exact black screen-coordinate rectangles without offsets", function()
         local overlay, _, _, _, _, paints, bb = make_fixture{
             visible = { p0 = true, p1 = true },
             boxes = function()
@@ -189,7 +210,7 @@ describe("ephemeral read-along underline overlay", function()
         }
         overlay:setRange("p0", "p1")
         overlay:paintTo(bb, 100, 200)
-        assert.are.same({ x = 103, y = 212, w = 20, h = 2, color = "black" }, paints[1])
+        assert.are.same({ x = 3, y = 13, w = 20, h = 2, color = "black" }, paints[1])
     end)
 
     it("fails closed for invalid box results", function()
