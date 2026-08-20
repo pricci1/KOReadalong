@@ -34,6 +34,33 @@ KOReader reader ◀── XPointer/overlay adapter ◀── playback coordinato
 - **Reader adapter:** converts EPUB fragment IDs to CRe XPointers, derives current screen boxes, and paints ephemeral underlines. It recomputes boxes on page/position updates and document rerenders.
 - **Audio adapter:** exposes load, play, pause, seek, stop, position, and duration. Desktop and Kindle implementations must share this contract.
 
+## Parser and timeline contract
+
+The platform-neutral parser is `mediaoverlays.lua` inside the plugin directory. It
+accepts the extracted OPF XML, the OPF containing path, and either a map or list
+of extracted SMIL documents:
+
+```lua
+local clips, error_message = MediaOverlays.parse(
+    opf_xml,
+    "book/package.opf",
+    {
+        { path = "book/media/chapter.smil", xml = smil_xml },
+    }
+)
+```
+
+Each returned clip has `text_path`, `text_fragment`, `audio_path`,
+`clip_begin`, and `clip_end`. Paths are normalized relative to the containing
+document and remain ZIP-entry paths; the parser does not assume an `OEBPS/`
+root. A parse failure returns `nil, error_message`.
+
+`timeline.lua` provides `Timeline.new(clips):lookup(playback_time)`. Lookup uses
+binary search and half-open clip intervals, `[clip_begin, clip_end)`: a shared
+boundary selects the following clip and a gap returns `nil`. The timeline keeps
+the source audio clock values in each clip; audio-resource switching remains
+outside this parser/timeline slice.
+
 ## KOReader integration
 
 `koreadalong.koplugin/main.lua` is a document-only plugin. Expected lifecycle hooks are `onReaderReady`, `onPageUpdate`, `onPosUpdate`, `onDocumentRerendered`, and `onCloseDocument`.
