@@ -8,7 +8,7 @@ log_step() {
     printf '\n==> %s\n' "$1"
 }
 
-required_packages=(curl lua-busted lua-check luajit shellcheck xauth xvfb xz-utils)
+required_packages=(curl lua-busted lua-check luajit mpv shellcheck xauth xvfb xz-utils)
 missing_packages=()
 for package in "${required_packages[@]}"; do
     if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -Fq 'install ok installed'; then
@@ -52,5 +52,6 @@ log_step "Verifying development tools"
 luajit -v
 luacheck --version
 busted --version
+mpv --version | head -n 2
 shellcheck --version | head -n 2
 printf 'KOReader runtime: %s\n' "$koreader_dir"
