@@ -1,0 +1,278 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec 9>"$repo_root/.cache/koreadalong-smoke.lock"
+if ! flock -n 9; then
+    printf 'another KoReadalong smoke integration is already running\n' >&2
+    exit 1
+fi
+
+smoke_root="$repo_root/.cache/koreadalong-smoke"
+runtime_plugins="$repo_root/.cache/koreader-v2026.07.1/lib/koreader/plugins"
+plugin_link="$runtime_plugins/koreadalongsmoke.koplugin"
+epub="$smoke_root/synthetic.epub"
+run_log="$smoke_root/run.log"
+owned_dirs="$smoke_root/owned-dirs"
+
+cleanup() {
+    rm -f "$plugin_link"
+    if [[ -f "$owned_dirs" ]]; then
+        while IFS= read -r path; do
+            if [[ "$path" == /tmp/koreadalong-* ]]; then
+                rm -rf -- "$path"
+            fi
+        done < "$owned_dirs"
+    fi
+    rm -rf "$smoke_root"
+}
+trap cleanup EXIT INT TERM
+
+rm -rf "$smoke_root"
+mkdir -p "$smoke_root/book" "$smoke_root/META-INF"
+
+SMOKE_ROOT="$smoke_root" python3 - <<'PY'
+import os
+import wave
+import zipfile
+
+root = os.environ["SMOKE_ROOT"]
+book = os.path.join(root, "book")
+
+with wave.open(os.path.join(book, "audio.wav"), "wb") as audio:
+    audio.setnchannels(1)
+    audio.setsampwidth(2)
+    audio.setframerate(8000)
+    audio.writeframes(b"\0\0" * 8000)
+
+files = {
+    "mimetype": "application/epub+zip",
+    "META-INF/container.xml": """<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="book/package.opf" media-type="application/oebps-package+xml"/></rootfiles>
+</container>
+""",
+    "book/package.opf": """<?xml version="1.0" encoding="UTF-8"?>
+<package version="3.0" xmlns="http://www.idpf.org/2007/opf">
+  <metadata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">KoReadalong smoke</dc:title></metadata>
+  <manifest>
+    <item id="chapter" href="chapter.xhtml" media-type="application/xhtml+xml" media-overlay="overlay"/>
+    <item id="overlay" href="overlay.smil" media-type="application/smil+xml"/>
+  </manifest>
+  <spine><itemref idref="chapter"/></spine>
+</package>
+""",
+    "book/chapter.xhtml": """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><body><p><span id="sentence">A smoke test sentence.</span></p></body></html>
+""",
+    "book/overlay.smil": """<?xml version="1.0" encoding="UTF-8"?>
+<smil xmlns="http://www.w3.org/ns/SMIL"><body><seq>
+  <par><text src="chapter.xhtml#sentence"/><audio src="audio.wav" clipBegin="0s" clipEnd="1s"/></par>
+</seq></body></smil>
+""",
+}
+
+for path, content in files.items():
+    with open(os.path.join(root, path), "wb") as output:
+        output.write(content.encode("utf-8"))
+
+with zipfile.ZipFile(os.path.join(root, "synthetic.epub"), "w") as epub:
+    mimetype = zipfile.ZipInfo("mimetype")
+    mimetype.compress_type = zipfile.ZIP_STORED
+    epub.writestr(mimetype, files["mimetype"])
+    for path in files:
+        if path != "mimetype":
+            epub.write(os.path.join(root, path), path)
+    epub.write(os.path.join(book, "audio.wav"), "book/audio.wav")
+PY
+
+mkdir -p "$smoke_root/koreadalongsmoke.koplugin"
+cat > "$smoke_root/koreadalongsmoke.koplugin/main.lua" <<'LUA'
+local WidgetContainer = require("ui/widget/container/widgetcontainer")
+local MediaOverlays = require("mediaoverlays")
+local Timeline = require("timeline")
+local FragmentResolver = require("fragmentresolver")
+local UnderlineOverlay = require("underlineoverlay")
+local Materializer = require("materializer")
+local PlaybackCoordinator = require("playbackcoordinator")
+local MpvAudio = require("mpvaudio")
+local MpvProcess = require("mpvprocess")
+local UIManager = require("ui/uimanager")
+local logger = require("logger")
+
+local Smoke = WidgetContainer:extend{
+    name = "koreadalongsmoke",
+    is_doc_only = true,
+}
+
+local coordinator
+local quit_scheduled = false
+
+local function fail(message)
+    if quit_scheduled then
+        return
+    end
+    quit_scheduled = true
+    logger.error("SMOKE_FAILURE " .. message)
+    if coordinator then
+        coordinator:close()
+    end
+    UIManager:scheduleIn(1, function()
+        UIManager:quit(1)
+    end)
+end
+
+local function exists(path)
+    return os.rename(path, path) ~= nil
+end
+
+function Smoke:onReaderReady()
+    if self.started then
+        return
+    end
+    self.started = true
+    local clips, parse_error = MediaOverlays.load(function(path)
+        return self.document:getDocumentFileContent(path)
+    end)
+    assert(clips, parse_error)
+    assert(#clips == 1, "expected one smoke clip")
+
+    local direct_range, direct_error = FragmentResolver.resolve(
+        self.document,
+        clips[1]
+    )
+    assert(direct_range, direct_error)
+    logger.info("SMOKE_RESOLVE ok=true text="
+        .. self.document:getTextFromXPointer("#_doc_fragment_0_ sentence"))
+
+    local overlay = UnderlineOverlay.new{
+        dialog = self.dialog,
+        document = self.document,
+        ui = self.ui,
+        view = self.view,
+    }
+    assert(overlay:register())
+    local process = MpvProcess.new{
+        test_only = true,
+        extra_args = { "--ao=null" },
+    }
+    local adapter = MpvAudio.new{
+        timer = UIManager,
+        process = process,
+    }
+    local materializer = Materializer.new{}
+    coordinator = PlaybackCoordinator.new{
+        adapter = adapter,
+        scheduler = UIManager,
+        archive_reader = function(path)
+            return self.document:getDocumentFileContent(path)
+        end,
+        materializer = materializer,
+        timeline = assert(Timeline.new(clips)),
+        resolver = FragmentResolver,
+        document = self.document,
+        overlay = overlay,
+        clips = clips,
+        on_error = function(error_message)
+            fail("coordinator error: " .. error_message)
+        end,
+    }
+    self.coordinator = coordinator
+    self.adapter = adapter
+    self.process = process
+    self.materializer = materializer
+    self.overlay = overlay
+    local started, start_error = coordinator:start()
+    if not started then
+        fail("start failed: " .. tostring(start_error))
+        return
+    end
+
+    local owned_dirs = assert(io.open(
+        assert(os.getenv("KOREADALONG_SMOKE_OWNED_DIRS")),
+        "w"
+    ))
+    owned_dirs:write(materializer.session_dir, "\n", process.session_dir, "\n")
+    owned_dirs:close()
+
+    UIManager:scheduleIn(1.5, function()
+        local status = adapter:getStatus()
+        if status.state ~= "playing" then
+            fail("expected playing, got " .. tostring(status.state))
+            return
+        end
+        if type(status.position) ~= "number" or status.position <= 0 then
+            fail("expected playback position")
+            return
+        end
+        if not overlay.pos0 or not coordinator.range_cache[1] then
+            fail("expected cached underline range")
+            return
+        end
+        logger.info("SMOKE_PLAYBACK state=" .. status.state
+            .. " position=" .. tostring(status.position)
+            .. " range_cache=true audio=book/audio.wav")
+    end)
+    UIManager:scheduleIn(3.2, function()
+        if coordinator:getState() ~= "ended" then
+            fail("expected final EOF, got " .. coordinator:getState())
+            return
+        end
+        if coordinator.materialized_path ~= nil then
+            fail("final EOF retained materialized audio")
+            return
+        end
+        logger.info("SMOKE_EOF state=ended audio_removed=true")
+    end)
+    UIManager:scheduleIn(4.2, function()
+        local audio_dir = materializer.session_dir
+        coordinator:close()
+        if exists(audio_dir) then
+            fail("materialized audio directory remains")
+            return
+        end
+        logger.info("SMOKE_CLOSE audio_dir_gone=true coordinator_state="
+            .. coordinator:getState())
+    end)
+    UIManager:scheduleIn(5.2, function()
+        if not process:is_done() then
+            fail("mpv process did not finish teardown")
+            return
+        end
+        if exists(process.session_dir) then
+            fail("mpv session directory remains")
+            return
+        end
+        logger.info("SMOKE_CLEANUP mpv_done=true mpv_dir_gone=true")
+        UIManager:quit(0)
+    end)
+end
+
+return Smoke
+LUA
+
+mkdir -p "$runtime_plugins"
+ln -sfn "$smoke_root/koreadalongsmoke.koplugin" "$plugin_link"
+
+status=0
+KOREADALONG_SMOKE_OWNED_DIRS="$owned_dirs" \
+    timeout 8s xvfb-run -a "$repo_root/scripts/run-koreader" -d "$epub" \
+    >"$run_log" 2>&1 || status=$?
+cat "$run_log"
+if [[ "$status" -ne 0 ]]; then
+    printf 'smoke integration failed with status %s\n' "$status" >&2
+    exit "$status"
+fi
+
+grep -F "SMOKE_RESOLVE ok=true" "$run_log" >/dev/null
+grep -F "SMOKE_PLAYBACK state=playing" "$run_log" >/dev/null
+grep -F "SMOKE_EOF state=ended audio_removed=true" "$run_log" >/dev/null
+grep -F "SMOKE_CLOSE audio_dir_gone=true coordinator_state=closed" "$run_log" >/dev/null
+grep -F "SMOKE_CLEANUP mpv_done=true mpv_dir_gone=true" "$run_log" >/dev/null
+
+while IFS= read -r path; do
+    if [[ -n "$path" ]] && [[ -e "$path" ]]; then
+        printf 'smoke integration left owned temporary directory: %s\n' "$path" >&2
+        exit 1
+    fi
+done < "$owned_dirs"
