@@ -501,9 +501,11 @@ local function parse_package_metadata(opf_xml, opf_path)
         return nil, "OPF document has no spine"
     end
     local overlay_documents = {}
+    local spine_content_hrefs = {}
     -- CRe counts every preceding spine itemref whose manifest item has a
     -- non-empty id and href.  linear="no", non-overlay, unsupported, and
-    -- repeated valid itemrefs still consume a slot.
+    -- repeated valid itemrefs still consume a slot. Repeated content hrefs
+    -- are rejected below because CRe's path substitution is ambiguous.
     local spine_index = 0
     for _, itemref in ipairs(spine.children) do
         if itemref.name == "itemref" then
@@ -516,19 +518,25 @@ local function parse_package_metadata(opf_xml, opf_path)
                 return nil, "spine itemref references missing manifest item '" .. idref .. "'"
             end
             local document_spine_index = spine_index
+            local content_path, content_path_error
             if content.id and content.id ~= "" and content.href and content.href ~= "" then
-                spine_index = spine_index + 1
-            end
-            if overlay_items_by_id[idref] then
-                if not content.href or content.href == "" then
-                    return nil, "XHTML item '" .. (content.id or "?") .. "' has no href"
-                end
-                local content_path, content_path_error = resolve_reference(
+                content_path, content_path_error = resolve_reference(
                     opf_path,
                     content.href
                 )
                 if not content_path then
                     return nil, content_path_error
+                end
+                if spine_content_hrefs[content_path] then
+                    return nil, "duplicate spine content href '" .. content_path
+                        .. "' is unsupported"
+                end
+                spine_content_hrefs[content_path] = true
+                spine_index = spine_index + 1
+            end
+            if overlay_items_by_id[idref] then
+                if not content.href or content.href == "" then
+                    return nil, "XHTML item '" .. (content.id or "?") .. "' has no href"
                 end
                 local smil_item = items_by_id[content["media-overlay"]]
                 if not smil_item then

@@ -58,7 +58,9 @@ including `linear="no"`, non-overlay, unsupported or unavailable content, and
 repeated valid entries. Unresolved itemrefs and manifest items missing an `id`
 or `href` do not count. Paths are normalized relative to the containing
 document and remain ZIP-entry paths; the parser does not assume an `OEBPS/`
-root. A parse failure returns `nil, error_message`.
+root. Repeated normalized content hrefs in the spine are rejected as
+unsupported because CRe's path substitution cannot provide an exact mapping.
+A parse failure returns `nil, error_message`.
 
 Production integration uses the same parser through an archive-entry callback:
 

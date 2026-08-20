@@ -141,9 +141,9 @@ describe("Storyteller fragment resolver", function()
         assert.are.equal("p18", second.pos1)
     end)
 
-    it("stops before a known next target boundary", function()
+    it("uses the next target first visible character as the boundary", function()
         local document = fake_document("hello world", {
-            ["#_doc_fragment_0_first"] = { start = 1, text = "hello" },
+            ["#_doc_fragment_0_first"] = { start = 1, text = "hello " },
             ["#_doc_fragment_0_second"] = { start = 7, text = "world" },
         })
         local result, error_message = FragmentResolver.resolve(
@@ -152,16 +152,16 @@ describe("Storyteller fragment resolver", function()
             clip(0, "second")
         )
         assert.is_nil(error_message)
-        assert.are.equal("p6", result.pos1)
+        assert.are.equal("p7", result.pos1)
 
         result, error_message = FragmentResolver.resolve(
             document,
             clip(0, "first"),
             clip(0, "second"),
-            { max_steps = 5 }
+            { max_steps = 6 }
         )
         assert.is_nil(error_message)
-        assert.are.equal("p6", result.pos1)
+        assert.are.equal("p7", result.pos1)
 
         document = fake_document("hello world", {
             ["#_doc_fragment_0_first"] = { start = 1, text = "hello world" },
@@ -173,7 +173,7 @@ describe("Storyteller fragment resolver", function()
             clip(0, "second")
         )
         assert.is_nil(result)
-        assert.matches("next target boundary reached or crossed", error_message)
+        assert.matches("next target boundary crossed", error_message)
     end)
 
     it("fails closed for missing or empty anchors", function()

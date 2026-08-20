@@ -189,7 +189,7 @@ describe("EPUB media overlays", function()
         assert.matches("duplicate XHTML content href", error_message)
     end)
 
-    it("counts repeated valid spine itemrefs independently", function()
+    it("rejects repeated valid spine itemrefs with duplicate content hrefs", function()
         local repeated = OPF:gsub(
             '<itemref idref="chapter"/>',
             '<itemref idref="other"/><itemref idref="chapter"/>'
@@ -202,11 +202,8 @@ describe("EPUB media overlays", function()
                 ["book/media/other.smil"] = OTHER_SMIL,
             }
         )
-        assert.is_nil(error_message)
-        assert.are.equal(5, #clips)
-        assert.are.equal(0, clips[1].spine_index)
-        assert.are.equal(4, clips[3].spine_index)
-        assert.are.equal(4, clips[5].spine_index)
+        assert.is_nil(clips)
+        assert.matches("duplicate spine content href.*unsupported", error_message)
     end)
 end)
 

@@ -156,6 +156,7 @@ function FragmentResolver.resolve(document, clip, next_clip, options)
     end
 
     local next_anchor
+    local next_pos0
     if next_clip ~= nil then
         local valid_next_clip, next_clip_error = validate_clip(next_clip)
         if not valid_next_clip then
@@ -178,6 +179,18 @@ function FragmentResolver.resolve(document, clip, next_clip, options)
         if next_order ~= 1 then
             return nil, error_message("invalid next-target ordering")
         end
+        local next_pos0_ok, next_pointer = invoke(
+            document,
+            "getNextVisibleChar",
+            next_anchor
+        )
+        if not next_pos0_ok then
+            return nil, next_pointer
+        end
+        if not valid_pointer(next_pointer) then
+            return nil, error_message("invalid pointer from getNextVisibleChar")
+        end
+        next_pos0 = next_pointer
     end
 
     local pos0_ok, pos0 = invoke(
@@ -191,8 +204,8 @@ function FragmentResolver.resolve(document, clip, next_clip, options)
     if not valid_pointer(pos0) then
         return nil, error_message("invalid pointer from getNextVisibleChar")
     end
-    if next_anchor then
-        local pos0_order, pos0_order_error = compare(document, pos0, next_anchor)
+    if next_pos0 then
+        local pos0_order, pos0_order_error = compare(document, pos0, next_pos0)
         if not pos0_order then
             return nil, pos0_order_error
         end
@@ -226,17 +239,17 @@ function FragmentResolver.resolve(document, clip, next_clip, options)
         if pointer_order ~= 1 then
             return nil, error_message("next visible pointer did not advance")
         end
-        if next_anchor then
+        if next_pos0 then
             local boundary_order, boundary_error = compare(
                 document,
                 pos1,
-                next_anchor
+                next_pos0
             )
             if not boundary_order then
                 return nil, boundary_error
             end
-            if boundary_order ~= 1 then
-                return nil, error_message("next target boundary reached or crossed")
+            if boundary_order == -1 then
+                return nil, error_message("next target boundary crossed")
             end
         end
 
