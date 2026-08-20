@@ -133,11 +133,13 @@ process group, and bounded quit/close, SIGTERM, then SIGKILL teardown.
 
 Each loaded resource gets fresh mpv `observe_property` IDs. Replacement first
 unobserves the old IDs, queues `loadfile ... replace`, and waits for mpv's
-`file-loaded` event before observing the new resource. During that boundary,
-old `end-file` events are ignored and property changes are accepted only when
-their real mpv observer ID belongs to the current generation. A second `load`
-while the adapter is still loading is rejected rather than overlapping two
-unresolved file boundaries.
+`file-loaded` event before observing the new resource. In pinned mpv 0.35.1,
+the `loadfile` reply only acknowledges command handling and `file-loaded` has
+no request or session id. During that unresolved boundary, old `end-file`
+events are ignored, property changes are accepted only when their real mpv
+observer ID belongs to the current generation, and both `stop` and a second
+`load` are rejected. `close` is the cancellation path and tears down the IPC
+session; the coordinator therefore disables Stop while it is `LOADING`.
 
 The adapter receives an already-materialized local audio path. It never opens
 TCP, parses stderr, injects keyboard input, or extracts EPUB resources. The

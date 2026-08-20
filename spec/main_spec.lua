@@ -105,6 +105,7 @@ describe("KoReadalong lifecycle and menu", function()
             function instance:isStopEnabled()
                 return self.state ~= "idle"
                     and self.state ~= "ended"
+                    and self.state ~= "loading"
                     and self.state ~= "stopping"
                     and self.state ~= "error"
             end
@@ -233,6 +234,10 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal("Start", submenu[1].text_func())
         assert.is_true(submenu[1].enabled_func())
         assert.is_false(submenu[2].enabled_func())
+        coordinator.state = "loading"
+        assert.is_false(submenu[2].enabled_func())
+        assert.are.equal(0, coordinator.stop_count)
+        coordinator.state = "idle"
         submenu[1].callback()
         assert.are.equal("Pause", submenu[1].text_func())
         assert.are.equal("Stop", submenu[2].text)

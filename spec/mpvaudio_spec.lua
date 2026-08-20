@@ -145,6 +145,16 @@ local function sent_request(transport, command_name)
     end
 end
 
+local function sent_count(transport, command_name)
+    local count = 0
+    for _, message in ipairs(transport.sent) do
+        if message.command[1] == command_name then
+            count = count + 1
+        end
+    end
+    return count
+end
+
 local function reply(transport, request, error_message)
     transport:push{
         request_id = request.request_id,
@@ -343,6 +353,109 @@ describe("desktop mpv audio adapter", function()
         assert.are.equal("idle", adapter:getStatus().state)
     end)
 
+    it("rejects stop and replacement until the untagged file-loaded boundary is consumed", function()
+        local adapter, timer, _, transport = make_adapter()
+        assert.is_true(adapter:load("/tmp/first.wav"))
+        tick(timer)
+        local first_load = sent_request(transport, "loadfile")
+        assert.is_not_nil(first_load)
+
+        -- The coordinator pauses immediately after load. That optimistic
+        -- state change must not make the unresolved boundary reusable.
+        assert.is_true(adapter:pause())
+        assert.are.equal("paused", adapter:getStatus().state)
+        assert.is_true(adapter.awaiting_file_loaded)
+        local generation = adapter.generation
+        local commands_before_rejection = #transport.sent
+
+        local stopped, stop_error = adapter:stop()
+        assert.is_nil(stopped)
+        assert.matches("file%-loaded", stop_error)
+        local replaced, replace_error = adapter:load("/tmp/second.wav")
+        assert.is_nil(replaced)
+        assert.matches("file%-loaded", replace_error)
+        assert.are.equal(generation, adapter.generation)
+        assert.are.equal(commands_before_rejection, #transport.sent)
+        assert.are.equal(1, sent_count(transport, "loadfile"))
+        assert.are.equal(0, sent_count(transport, "stop"))
+
+        -- These are production-shaped, untagged mpv messages for the first
+        -- load. With no replacement admitted, they can only complete that
+        -- same generation.
+        reply(transport, first_load)
+        transport:push{ event = "file-loaded" }
+        tick(timer)
+        assert.is_false(adapter.awaiting_file_loaded)
+        push_property(adapter, transport, "duration", 2)
+        push_property(adapter, transport, "idle-active", false)
+        push_property(adapter, transport, "pause", false)
+        tick(timer)
+        assert.are.equal(generation, adapter.generation)
+        assert.are.equal("playing", adapter:getStatus().state)
+    end)
+
+    it("keeps delayed lifecycle messages in a closed session away from a new session", function()
+        local first, first_timer, first_process, first_transport = make_adapter()
+        assert.is_true(first:load("/tmp/first.wav"))
+        tick(first_timer)
+        assert.is_true(first:pause())
+        assert.is_true(first:close())
+
+        -- A late event/property pair from the closed session has no request
+        -- generation field, just like real mpv IPC messages.
+        first_transport:push{ event = "file-loaded" }
+        first_transport:push{
+            event = "property-change",
+            id = 1,
+            name = "duration",
+            data = 99,
+        }
+        first_timer:advance(0.05)
+        assert.are.equal(1, first_process.cleanup_count)
+        assert.are.equal(1, first_transport.close_count)
+
+        local second, second_timer, _, second_transport = make_adapter()
+        assert.is_true(second:load("/tmp/second.wav"))
+        tick(second_timer)
+        assert.are.equal("loading", second:getStatus().state)
+        assert.is_nil(second:getStatus().duration)
+
+        local second_load = sent_request(second_transport, "loadfile")
+        reply(second_transport, second_load)
+        second_transport:push{ event = "file-loaded" }
+        tick(second_timer)
+        push_property(second, second_transport, "duration", 3)
+        push_property(second, second_transport, "idle-active", false)
+        push_property(second, second_transport, "pause", false)
+        tick(second_timer)
+        assert.are.equal("playing", second:getStatus().state)
+        assert.are.equal(3, second:getStatus().duration)
+    end)
+
+    it("allows stop acknowledgement and replacement after file-loaded", function()
+        local adapter, timer, _, transport = make_adapter()
+        assert.is_true(adapter:load("/tmp/first.wav"))
+        tick(timer)
+        local first_load = sent_request(transport, "loadfile")
+        reply(transport, first_load)
+        transport:push{ event = "file-loaded" }
+        tick(timer)
+        assert.is_false(adapter.awaiting_file_loaded)
+
+        assert.is_true(adapter:stop())
+        local stop_request = sent_request(transport, "stop")
+        reply(transport, stop_request)
+        transport:push{ event = "end-file", reason = "stop" }
+        tick(timer)
+        assert.are.equal("idle", adapter:getStatus().state)
+
+        assert.is_true(adapter:load("/tmp/second.wav"))
+        local second_load = sent_request(transport, "loadfile")
+        assert.is_not_nil(second_load)
+        assert.are_not.equal(first_load.request_id, second_load.request_id)
+        assert.are.equal(2, adapter.generation)
+    end)
+
     it("uses production observer ids and orders replacement around file-loaded", function()
         local adapter, timer, _, transport = make_adapter()
         adapter:load("/tmp/first.wav")
@@ -444,5 +557,17 @@ describe("desktop mpv audio adapter", function()
         timer:advance(0.05)
         assert.are.equal(1, process.cleanup_count)
         assert.are.equal(1, transport.close_count)
+    end)
+
+    it("does not flush a queued load after closing before IPC connects", function()
+        local adapter, timer, process, transport = make_adapter()
+        assert.is_true(adapter:load("/tmp/audio.wav"))
+        assert.is_true(adapter:close())
+        timer:advance(0.05)
+        assert.are.equal("closed", adapter:getStatus().state)
+        assert.are.equal(0, #transport.sent)
+        assert.are.equal(1, process.cleanup_count)
+        assert.are.equal(1, transport.close_count)
+        assert.is_nil(timer.tasks[adapter.teardown_action])
     end)
 end)

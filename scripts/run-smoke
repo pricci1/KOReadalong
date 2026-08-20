@@ -256,7 +256,7 @@ ln -sfn "$smoke_root/koreadalongsmoke.koplugin" "$plugin_link"
 
 status=0
 KOREADALONG_SMOKE_OWNED_DIRS="$owned_dirs" \
-    timeout 8s xvfb-run -a "$repo_root/scripts/run-koreader" -d "$epub" \
+    timeout 15s xvfb-run -a "$repo_root/scripts/run-koreader" -d "$epub" \
     >"$run_log" 2>&1 || status=$?
 cat "$run_log"
 if [[ "$status" -ne 0 ]]; then

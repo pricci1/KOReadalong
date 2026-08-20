@@ -309,6 +309,9 @@ function MpvAudio:_send_pending_commands()
 end
 
 function MpvAudio:_on_connected(event)
+    if self.closed or self.abort_started then
+        return
+    end
     self.connected = true
     self:_send_pending_commands()
 end
@@ -364,7 +367,6 @@ function MpvAudio:_on_event(message)
             return
         end
         self.awaiting_file_loaded = false
-        self.file_loaded_generation = self.generation
         if not self:_send_observers() then
             self:_abort_session()
         end
@@ -493,6 +495,11 @@ function MpvAudio:load(local_file_path)
     if self.abort_started then
         return nil, "mpv audio adapter session has failed"
     end
+    -- mpv 0.35.1 does not attach a request or session id to file-loaded.
+    -- Do not reuse this IPC session until that untagged boundary is consumed.
+    if self.awaiting_file_loaded then
+        return nil, "audio load is still awaiting mpv file-loaded; close the adapter to cancel it"
+    end
     if self.state == MpvAudio.STATES.LOADING then
         return nil, "audio replacement is still loading"
     end
@@ -504,7 +511,6 @@ function MpvAudio:load(local_file_path)
     self.status.error = nil
     self.load_acknowledged = false
     self.awaiting_file_loaded = true
-    self.file_loaded_generation = nil
     self.load_request_id = nil
     self:_set_state(MpvAudio.STATES.LOADING)
 
@@ -607,6 +613,11 @@ function MpvAudio:stop()
     if self.abort_started then
         return nil, "mpv audio adapter session has failed"
     end
+    -- A stop reply does not cancel a load that mpv may still complete, and
+    -- the later file-loaded event cannot be correlated to this request.
+    if self.awaiting_file_loaded then
+        return nil, "cannot stop before mpv file-loaded; close the adapter to cancel it"
+    end
     local ok, error_message = self:_queue_or_send({ "stop" }, "stop")
     if not ok then
         return nil, error_message
@@ -654,6 +665,9 @@ function MpvAudio:close()
     end
     self.closed = true
     self:_set_state(MpvAudio.STATES.CLOSED)
+    self.awaiting_file_loaded = false
+    self.pending_load = nil
+    self.queued_commands = {}
     if self.poll_scheduled then
         self.timer:unschedule(self.poll_action)
         self.poll_scheduled = false

@@ -144,6 +144,7 @@ end
 function PlaybackCoordinator:isStopEnabled()
     return not self.closed
         and self.state ~= PlaybackCoordinator.STATES.ERROR
+        and self.state ~= PlaybackCoordinator.STATES.LOADING
         and self.state ~= PlaybackCoordinator.STATES.STOPPING
         and self.state ~= PlaybackCoordinator.STATES.IDLE
         and self.state ~= PlaybackCoordinator.STATES.ENDED
@@ -567,6 +568,9 @@ function PlaybackCoordinator:stop()
     if self.state == PlaybackCoordinator.STATES.ERROR then
         return nil, "read-along audio failed; reopen the document to retry"
     end
+    if self.state == PlaybackCoordinator.STATES.LOADING then
+        return nil, "audio is still loading; close the document to cancel it"
+    end
     if self.state == PlaybackCoordinator.STATES.STOPPING then
         return true
     end
@@ -603,7 +607,8 @@ function PlaybackCoordinator:close()
     self.generation = self.generation + 1
     self.closed = true
     self:_unschedule_poll()
-    if self.state ~= PlaybackCoordinator.STATES.STOPPING then
+    if self.state ~= PlaybackCoordinator.STATES.STOPPING
+        and self.state ~= PlaybackCoordinator.STATES.LOADING then
         invoke_optional(self.adapter, "stop")
     end
     invoke_optional(self.adapter, "close")
