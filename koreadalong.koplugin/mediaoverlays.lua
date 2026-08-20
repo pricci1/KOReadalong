@@ -486,7 +486,6 @@ function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
         return nil, documents_error
     end
     local clips = {}
-    local spine_overlay_ids = {}
     for _, itemref in ipairs(spine.children) do
         if itemref.name == "itemref" then
             local idref = itemref.attributes.idref
@@ -498,7 +497,6 @@ function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
                 return nil, "spine itemref references missing manifest item '" .. idref .. "'"
             end
             if overlay_items_by_id[idref] then
-                spine_overlay_ids[idref] = true
                 if not content.href then
                     return nil, "XHTML item '" .. (content.id or "?") .. "' has no href"
                 end
@@ -542,11 +540,6 @@ function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
                     clips[#clips + 1] = clip
                 end
             end
-        end
-    end
-    for id, content in pairs(overlay_items_by_id) do
-        if not spine_overlay_ids[id] then
-            return nil, "XHTML overlay item '" .. id .. "' is not referenced by spine"
         end
     end
     return clips

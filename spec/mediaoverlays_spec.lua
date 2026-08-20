@@ -11,6 +11,8 @@ local OPF = [[
         <item id="other" href="text/other.xhtml" media-type="application/xhtml+xml" media-overlay="other-mo"/>
         <item id="other-mo" href="media/other.smil" media-type="application/smil+xml"/>
         <item id="cover" href="text/cover.xhtml" media-type="application/xhtml+xml"/>
+        <item id="appendix" href="text/appendix.xhtml" media-type="application/xhtml+xml" media-overlay="appendix-mo"/>
+        <item id="appendix-mo" href="media/appendix.smil" media-type="application/smil+xml"/>
     </manifest>
     <spine>
         <itemref idref="other"/>
@@ -79,7 +81,7 @@ describe("SMIL clock values", function()
 end)
 
 describe("EPUB media overlays", function()
-    it("maps manifest overlays and traverses nested sequences in order", function()
+    it("follows spine order and ignores overlay documents outside the spine", function()
         local clips, error_message = parse_fixture()
         assert.is_nil(error_message)
         assert.are.equal(4, #clips)
