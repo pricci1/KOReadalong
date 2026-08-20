@@ -23,7 +23,7 @@ local function fake_document(content, targets, behavior)
             return tonumber(position)
         end
         local spine_index, text_fragment = pointer:match(
-            "^#_doc_fragment_([0-9]+)_(.+)$"
+            "^#_doc_fragment_([0-9]+)_ (.+)$"
         )
         local target = targets[pointer]
         if spine_index and text_fragment and target then
@@ -97,9 +97,9 @@ end
 describe("Storyteller fragment resolver", function()
     it("resolves one-character, word, and sentence ranges with half-open ends", function()
         local document = fake_document("A word sentence.", {
-            ["#_doc_fragment_0_letter"] = { start = 1, text = "A" },
-            ["#_doc_fragment_0_word"] = { start = 3, text = "word" },
-            ["#_doc_fragment_0_sentence"] = { start = 8, text = "sentence." },
+            ["#_doc_fragment_0_ letter"] = { start = 1, text = "A" },
+            ["#_doc_fragment_0_ word"] = { start = 3, text = "word" },
+            ["#_doc_fragment_0_ sentence"] = { start = 8, text = "sentence." },
         })
 
         local result, error_message = FragmentResolver.resolve(
@@ -110,7 +110,7 @@ describe("Storyteller fragment resolver", function()
         assert.are.same({
             pos0 = "p1",
             pos1 = "p2",
-            anchor = "#_doc_fragment_0_letter",
+            anchor = "#_doc_fragment_0_ letter",
         }, result)
 
         result, error_message = FragmentResolver.resolve(document, clip(0, "word"))
@@ -129,8 +129,8 @@ describe("Storyteller fragment resolver", function()
 
     it("keeps repeated text distinct through their ID anchors", function()
         local document = fake_document("echo between echo", {
-            ["#_doc_fragment_2_first"] = { start = 1, text = "echo" },
-            ["#_doc_fragment_2_second"] = { start = 14, text = "echo" },
+            ["#_doc_fragment_2_ first"] = { start = 1, text = "echo" },
+            ["#_doc_fragment_2_ second"] = { start = 14, text = "echo" },
         })
 
         local first = FragmentResolver.resolve(document, clip(2, "first"))
@@ -143,8 +143,8 @@ describe("Storyteller fragment resolver", function()
 
     it("uses the next target first visible character as the boundary", function()
         local document = fake_document("hello world", {
-            ["#_doc_fragment_0_first"] = { start = 1, text = "hello " },
-            ["#_doc_fragment_0_second"] = { start = 7, text = "world" },
+            ["#_doc_fragment_0_ first"] = { start = 1, text = "hello " },
+            ["#_doc_fragment_0_ second"] = { start = 7, text = "world" },
         })
         local result, error_message = FragmentResolver.resolve(
             document,
@@ -164,8 +164,8 @@ describe("Storyteller fragment resolver", function()
         assert.are.equal("p7", result.pos1)
 
         document = fake_document("hello world", {
-            ["#_doc_fragment_0_first"] = { start = 1, text = "hello world" },
-            ["#_doc_fragment_0_second"] = { start = 7, text = "world" },
+            ["#_doc_fragment_0_ first"] = { start = 1, text = "hello world" },
+            ["#_doc_fragment_0_ second"] = { start = 7, text = "world" },
         })
         result, error_message = FragmentResolver.resolve(
             document,
@@ -178,9 +178,9 @@ describe("Storyteller fragment resolver", function()
 
     it("fails closed for missing or empty anchors", function()
         local document = fake_document("visible", {
-            ["#_doc_fragment_0_visible"] = { start = 1, text = "visible" },
-            ["#_doc_fragment_0_empty"] = { start = 1, text = "" },
-            ["#_doc_fragment_0_whitespace"] = { start = 1, text = " \n\t" },
+            ["#_doc_fragment_0_ visible"] = { start = 1, text = "visible" },
+            ["#_doc_fragment_0_ empty"] = { start = 1, text = "" },
+            ["#_doc_fragment_0_ whitespace"] = { start = 1, text = " \n\t" },
         })
         local result, error_message = FragmentResolver.resolve(
             document,
@@ -203,7 +203,7 @@ describe("Storyteller fragment resolver", function()
 
     it("rejects prefix mismatches before searching elsewhere", function()
         local document = fake_document("hullo", {
-            ["#_doc_fragment_0_target"] = { start = 1, text = "hello" },
+            ["#_doc_fragment_0_ target"] = { start = 1, text = "hello" },
         })
         local result, error_message = FragmentResolver.resolve(
             document,
@@ -215,10 +215,10 @@ describe("Storyteller fragment resolver", function()
 
     it("rejects non-advancing pointers and invalid compare results", function()
         local document = fake_document("word", {
-            ["#_doc_fragment_0_target"] = { start = 1, text = "word" },
+            ["#_doc_fragment_0_ target"] = { start = 1, text = "word" },
         }, {
             next_visible_char = function(pointer)
-                if pointer == "#_doc_fragment_0_target" then
+                if pointer == "#_doc_fragment_0_ target" then
                     return "p1"
                 end
                 return pointer
@@ -232,7 +232,7 @@ describe("Storyteller fragment resolver", function()
         assert.matches("did not advance", error_message)
 
         document = fake_document("word", {
-            ["#_doc_fragment_0_target"] = { start = 1, text = "word" },
+            ["#_doc_fragment_0_ target"] = { start = 1, text = "word" },
         }, {
             compare = function()
                 return nil
@@ -245,7 +245,7 @@ describe("Storyteller fragment resolver", function()
 
     it("enforces a bounded sentence step cap", function()
         local document = fake_document("long sentence", {
-            ["#_doc_fragment_0_target"] = { start = 1, text = "long sentence" },
+            ["#_doc_fragment_0_ target"] = { start = 1, text = "long sentence" },
         })
         local result, error_message = FragmentResolver.resolve(
             document,
@@ -259,7 +259,7 @@ describe("Storyteller fragment resolver", function()
 
     it("rejects malformed clips and unsupported target structures", function()
         local document = fake_document("visible", {
-            ["#_doc_fragment_0_visible"] = { start = 1, text = "visible" },
+            ["#_doc_fragment_0_ visible"] = { start = 1, text = "visible" },
         })
         local result, error_message = FragmentResolver.resolve(document, nil)
         assert.is_nil(result)
@@ -297,8 +297,8 @@ describe("Storyteller fragment resolver", function()
 
     it("rejects invalid next-target ordering", function()
         local document = fake_document("hello world", {
-            ["#_doc_fragment_2_first"] = { start = 7, text = "hello" },
-            ["#_doc_fragment_1_second"] = { start = 1, text = "world" },
+            ["#_doc_fragment_2_ first"] = { start = 7, text = "hello" },
+            ["#_doc_fragment_1_ second"] = { start = 1, text = "world" },
         })
         local result, error_message = FragmentResolver.resolve(
             document,

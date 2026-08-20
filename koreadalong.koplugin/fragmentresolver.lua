@@ -134,7 +134,7 @@ function FragmentResolver.resolve(document, clip, next_clip, options)
     end
 
     local anchor = "#_doc_fragment_" .. clip.spine_index
-        .. "_" .. clip.text_fragment
+        .. "_ " .. clip.text_fragment
     local anchor_ok, anchor_error = require_anchor(document, anchor, "target")
     if not anchor_ok then
         return nil, anchor_error
@@ -163,7 +163,7 @@ function FragmentResolver.resolve(document, clip, next_clip, options)
             return nil, error_message("malformed next clip") .. ": " .. next_clip_error
         end
         next_anchor = "#_doc_fragment_" .. next_clip.spine_index
-            .. "_" .. next_clip.text_fragment
+            .. "_ " .. next_clip.text_fragment
         local next_ok, next_error = require_anchor(
             document,
             next_anchor,

@@ -84,8 +84,9 @@ returns `nil`, and an unknown resource returns `nil`.
 
 `fragmentresolver.lua` is a platform-neutral, plugin-only resolver for the
 current Storyteller ID-fragment form. It builds
-`#_doc_fragment_<spine_index>_<text_fragment>` and uses only the injected CRe
-operations `isXPointerInDocument`, `getTextFromXPointer`,
+`#_doc_fragment_<spine_index>_ <text_fragment>` (including the literal space
+after the underscore) and uses only the injected CRe operations
+`isXPointerInDocument`, `getTextFromXPointer`,
 `getNextVisibleChar`, `getTextFromXPointers`, and `compareXPointers`.
 
 The resolver supports ordinary unique sentence/word IDs whose target has
