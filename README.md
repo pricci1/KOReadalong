@@ -2,7 +2,7 @@
 
 KoReadalong is a [KOReader](https://github.com/koreader/koreader) plugin for reading EPUB 3 books alongside their embedded audio. The Linux desktop MVP plays EPUB Media Overlays and underlines the sentence or paragraph currently being narrated.
 
-The primary target is a jailbroken Kindle with Bluetooth audio. Development and automated checks use KOReader's Linux desktop build.
+The current implementation targets KOReader's Linux desktop build. A jailbroken Kindle with Bluetooth audio is the planned hardware target, but Kindle playback is not implemented yet.
 
 ## Install on Linux
 
