@@ -55,6 +55,18 @@ Each returned clip has `text_path`, `text_fragment`, `audio_path`,
 document and remain ZIP-entry paths; the parser does not assume an `OEBPS/`
 root. A parse failure returns `nil, error_message`.
 
+Production integration uses the same parser through an archive-entry callback:
+
+```lua
+local clips, error_message = MediaOverlays.load(function(path)
+    return document:getDocumentFileContent(path)
+end)
+```
+
+`load` follows `META-INF/container.xml` to the package document and reads only
+the SMIL files referenced by spine media overlays. Archive access remains
+injected so parser tests do not depend on KOReader or a physical EPUB file.
+
 `timeline.lua` provides `Timeline.new(clips):lookup(audio_path, playback_time)`.
 Construction groups clips by `audio_path` and rejects non-monotonic clip clocks
 within a resource. Lookup uses binary search and half-open clip intervals,
