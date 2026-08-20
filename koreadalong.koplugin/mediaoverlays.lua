@@ -447,7 +447,7 @@ function MediaOverlays.resolve_path(base_path, reference)
     return resolve_reference(base_path, reference)
 end
 
-function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
+local function parse_package_metadata(opf_xml, opf_path)
     local package, xml_error = parse_xml(opf_xml)
     if not package then
         return nil, "invalid OPF XML: " .. xml_error
@@ -481,11 +481,7 @@ function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
     if not spine then
         return nil, "OPF document has no spine"
     end
-    local documents, documents_error = normalized_documents(smil_documents)
-    if not documents then
-        return nil, documents_error
-    end
-    local clips = {}
+    local overlay_documents = {}
     for _, itemref in ipairs(spine.children) do
         if itemref.name == "itemref" then
             local idref = itemref.attributes.idref
@@ -524,25 +520,143 @@ function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
                 if not smil_path then
                     return nil, smil_path_error
                 end
-                local smil_xml = documents[smil_path]
-                if not smil_xml then
-                    return nil, "SMIL document not provided for '" .. smil_path .. "'"
-                end
-                local smil_clips, smil_error = parse_smil(
-                    smil_xml,
-                    smil_path,
-                    content_path
-                )
-                if not smil_clips then
-                    return nil, "invalid SMIL '" .. smil_path .. "': " .. smil_error
-                end
-                for _, clip in ipairs(smil_clips) do
-                    clips[#clips + 1] = clip
-                end
+                overlay_documents[#overlay_documents + 1] = {
+                    path = smil_path,
+                    content_path = content_path,
+                }
             end
         end
     end
+    return overlay_documents
+end
+
+function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
+    local overlay_documents, metadata_error = parse_package_metadata(
+        opf_xml,
+        opf_path
+    )
+    if not overlay_documents then
+        return nil, metadata_error
+    end
+    local documents, documents_error = normalized_documents(smil_documents)
+    if not documents then
+        return nil, documents_error
+    end
+    local clips = {}
+    for _, document in ipairs(overlay_documents) do
+        local smil_xml = documents[document.path]
+        if not smil_xml then
+            return nil, "SMIL document not provided for '" .. document.path .. "'"
+        end
+        local smil_clips, smil_error = parse_smil(
+            smil_xml,
+            document.path,
+            document.content_path
+        )
+        if not smil_clips then
+            return nil, "invalid SMIL '" .. document.path .. "': " .. smil_error
+        end
+        for _, clip in ipairs(smil_clips) do
+            clips[#clips + 1] = clip
+        end
+    end
     return clips
+end
+
+local function read_archive_entry(read_file, path, description)
+    local ok, content, callback_error = pcall(read_file, path)
+    if not ok then
+        callback_error = content
+        content = nil
+    end
+    if type(content) == "string" then
+        return content
+    end
+    local detail = callback_error and tostring(callback_error)
+    if not detail or detail == "" then
+        detail = "callback returned no content"
+    end
+    return nil, "unable to read " .. description .. " '" .. path .. "': " .. detail
+end
+
+local function rootfile_path(container_xml)
+    local container, xml_error = parse_xml(container_xml)
+    if not container then
+        return nil, "invalid META-INF/container.xml: " .. xml_error
+    end
+    local rootfiles = find_descendant(container, "rootfiles")
+    if not rootfiles then
+        return nil, "META-INF/container.xml has no rootfile"
+    end
+    local first_rootfile
+    local package_rootfile
+    for _, child in ipairs(rootfiles.children) do
+        if child.name == "rootfile" then
+            first_rootfile = first_rootfile or child
+            if child.attributes["media-type"] == "application/oebps-package+xml" then
+                package_rootfile = package_rootfile or child
+            end
+        end
+    end
+    local selected = package_rootfile or first_rootfile
+    if not selected then
+        return nil, "META-INF/container.xml has no rootfile"
+    end
+    local full_path = selected.attributes["full-path"]
+    if not full_path or full_path == "" then
+        return nil, "EPUB rootfile is missing full-path"
+    end
+    local normalized, path_error = normalize_path(full_path)
+    if not normalized then
+        return nil, "invalid EPUB rootfile full-path: " .. path_error
+    end
+    return normalized
+end
+
+function MediaOverlays.load(read_file)
+    if type(read_file) ~= "function" then
+        return nil, "MediaOverlays.load requires a read_file callback"
+    end
+    local container_xml, container_error = read_archive_entry(
+        read_file,
+        "META-INF/container.xml",
+        "container"
+    )
+    if not container_xml then
+        return nil, container_error
+    end
+    local opf_path, rootfile_error = rootfile_path(container_xml)
+    if not opf_path then
+        return nil, rootfile_error
+    end
+    local opf_xml, opf_error = read_archive_entry(read_file, opf_path, "OPF")
+    if not opf_xml then
+        return nil, opf_error
+    end
+    local overlay_documents, metadata_error = parse_package_metadata(
+        opf_xml,
+        opf_path
+    )
+    if not overlay_documents then
+        return nil, "invalid OPF '" .. opf_path .. "': " .. metadata_error
+    end
+    local smil_documents = {}
+    local requested = {}
+    for _, document in ipairs(overlay_documents) do
+        if not requested[document.path] then
+            local smil_xml, smil_error = read_archive_entry(
+                read_file,
+                document.path,
+                "SMIL"
+            )
+            if not smil_xml then
+                return nil, smil_error
+            end
+            smil_documents[document.path] = smil_xml
+            requested[document.path] = true
+        end
+    end
+    return MediaOverlays.parse(opf_xml, opf_path, smil_documents)
 end
 
 return MediaOverlays

@@ -149,6 +149,148 @@ describe("EPUB media overlays", function()
     end)
 end)
 
+describe("EPUB media overlay loading", function()
+    local CONTAINER = [[
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+    <rootfiles>
+        <rootfile full-path="books/OPS/package.opf" media-type="application/oebps-package+xml"/>
+    </rootfiles>
+</container>
+]]
+    local MULTIPLE_ROOTFILES_CONTAINER = [[
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+    <rootfiles>
+        <rootfile full-path="books/OPS/not-the-package.xml" media-type="application/xml"/>
+        <rootfile full-path="books/OPS/package.opf" media-type="application/oebps-package+xml"/>
+    </rootfiles>
+</container>
+]]
+    local LOADER_OPF = [[
+<package xmlns="http://www.idpf.org/2007/opf">
+    <manifest>
+        <item id="chapter" href="text/chapter.xhtml" media-type="application/xhtml+xml" media-overlay="chapter-mo"/>
+        <item id="chapter-mo" href="media/chapter.smil" media-type="application/smil+xml"/>
+    </manifest>
+    <spine><itemref idref="chapter"/></spine>
+</package>
+]]
+    local SMIL = [[
+<smil xmlns="http://www.w3.org/ns/SMIL"><body><seq><par>
+    <text src="../text/chapter.xhtml#sentence"/>
+    <audio src="../audio/chapter.mp3" clipBegin="0" clipEnd="1s"/>
+</par></seq></body></smil>
+]]
+
+    local function callback_for(entries, requested)
+        return function(path)
+            requested[#requested + 1] = path
+            if entries[path] then
+                return entries[path]
+            end
+            return nil, "missing entry: " .. path
+        end
+    end
+
+    it("loads a nested package and requests only the required entries", function()
+        local requested = {}
+        local clips, error_message = MediaOverlays.load(callback_for({
+            ["META-INF/container.xml"] = CONTAINER,
+            ["books/OPS/package.opf"] = LOADER_OPF,
+            ["books/OPS/media/chapter.smil"] = SMIL,
+        }, requested))
+        assert.is_nil(error_message)
+        assert.are.same({
+            "META-INF/container.xml",
+            "books/OPS/package.opf",
+            "books/OPS/media/chapter.smil",
+        }, requested)
+        assert.are.equal(1, #clips)
+        assert.are.equal("books/OPS/text/chapter.xhtml", clips[1].text_path)
+        assert.are.equal("books/OPS/audio/chapter.mp3", clips[1].audio_path)
+        local timeline, timeline_error = Timeline.new(clips)
+        assert.is_nil(timeline_error)
+        assert.are.equal(clips[1], timeline:lookup(clips[1].audio_path, 0))
+    end)
+
+    it("prefers an EPUB package rootfile media type", function()
+        local requested = {}
+        local clips, error_message = MediaOverlays.load(callback_for({
+            ["META-INF/container.xml"] = MULTIPLE_ROOTFILES_CONTAINER,
+            ["books/OPS/package.opf"] = LOADER_OPF,
+            ["books/OPS/media/chapter.smil"] = SMIL,
+        }, requested))
+        assert.is_nil(error_message)
+        assert.are.equal(1, #clips)
+        assert.are.equal("books/OPS/package.opf", requested[2])
+        assert.is_not.equal("books/OPS/not-the-package.xml", requested[2])
+    end)
+
+    it("reports a missing container with callback context", function()
+        local clips, error_message = MediaOverlays.load(function(path)
+            return nil, "entry unavailable: " .. path
+        end)
+        assert.is_nil(clips)
+        assert.matches("unable to read container.*entry unavailable", error_message)
+    end)
+
+    it("reports a container with no rootfile", function()
+        local clips, error_message = MediaOverlays.load(function(path)
+            if path == "META-INF/container.xml" then
+                return "<container><rootfiles/></container>"
+            end
+            return nil, "unexpected read"
+        end)
+        assert.is_nil(clips)
+        assert.matches("container%.xml has no rootfile", error_message)
+    end)
+
+    it("reports a rootfile with no full-path", function()
+        local clips, error_message = MediaOverlays.load(function(path)
+            if path == "META-INF/container.xml" then
+                return "<container><rootfiles><rootfile media-type=\"application/oebps-package+xml\"/></rootfiles></container>"
+            end
+            return nil, "unexpected read"
+        end)
+        assert.is_nil(clips)
+        assert.matches("rootfile is missing full%-path", error_message)
+    end)
+
+    it("reports an unreadable OPF and preserves callback detail", function()
+        local clips, error_message = MediaOverlays.load(function(path)
+            if path == "META-INF/container.xml" then
+                return CONTAINER
+            end
+            return nil, "permission denied"
+        end)
+        assert.is_nil(clips)
+        assert.matches("unable to read OPF.*permission denied", error_message)
+    end)
+
+    it("reports an unreadable referenced SMIL", function()
+        local clips, error_message = MediaOverlays.load(function(path)
+            if path == "META-INF/container.xml" then
+                return CONTAINER
+            elseif path == "books/OPS/package.opf" then
+                return LOADER_OPF
+            end
+            return nil, "SMIL entry missing"
+        end)
+        assert.is_nil(clips)
+        assert.matches("unable to read SMIL.*SMIL entry missing", error_message)
+    end)
+
+    it("rejects a rootfile path that escapes the ZIP root", function()
+        local clips, error_message = MediaOverlays.load(function(path)
+            if path == "META-INF/container.xml" then
+                return "<container><rootfiles><rootfile full-path=\"../package.opf\"/></rootfiles></container>"
+            end
+            return nil, "unexpected read"
+        end)
+        assert.is_nil(clips)
+        assert.matches("escapes EPUB ZIP root", error_message)
+    end)
+end)
+
 describe("media overlay timeline", function()
     local clips = {
         { audio_path = "one.mp3", text_fragment = "one", clip_begin = 0, clip_end = 1 },
