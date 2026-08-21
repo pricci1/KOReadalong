@@ -120,6 +120,9 @@ describe("KoReadalong lifecycle and menu", function()
         function coordinator.new(options)
             coordinator.options = options
             local instance = coordinator
+            function instance:getState()
+                return self.state
+            end
             function instance:getActionLabel()
                 if self.state == "playing" then
                     return "Pause"
@@ -155,6 +158,11 @@ describe("KoReadalong lifecycle and menu", function()
             end
             function instance:playFromXPointer(pos0, pos1)
                 self.play_from_calls[#self.play_from_calls + 1] = { pos0, pos1 }
+                if self.fail_on_play_from then
+                    self.state = "error"
+                    self.options.on_error(self.fail_on_play_from)
+                    return nil, self.fail_on_play_from
+                end
                 if self.play_from_error then
                     return nil, self.play_from_error
                 end
@@ -362,6 +370,21 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal(2, highlight.close_count)
         assert.are.equal(2, #ui_manager.shown)
         assert.matches("no word is selected", ui_manager.shown[2].text)
+    end)
+
+    it("does not duplicate an error reported by a terminal coordinator failure", function()
+        plugin:onReaderReady()
+        highlight.selected_text = {
+            pos0 = "word-start",
+            pos1 = "word-end",
+        }
+        coordinator.fail_on_play_from = "decoder failed"
+        local action = highlight.buttons["12_read_from_here"](highlight)
+        action.callback()
+
+        assert.are.equal("error", coordinator:getState())
+        assert.are.equal(1, #ui_manager.shown)
+        assert.matches("decoder failed", ui_manager.shown[1].text)
     end)
 
     it("shows explicit coordinator errors and routes rerender lifecycle", function()

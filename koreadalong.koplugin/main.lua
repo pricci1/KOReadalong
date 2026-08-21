@@ -109,7 +109,11 @@ function KoReadalong:_register_highlight_action()
                 if not called then
                     self:_show_error(started)
                 elseif not started then
-                    self:_show_error(error_message)
+                    local state = type(self.coordinator.getState) == "function"
+                        and self.coordinator:getState()
+                    if state ~= "error" then
+                        self:_show_error(error_message)
+                    end
                 end
             end,
         }

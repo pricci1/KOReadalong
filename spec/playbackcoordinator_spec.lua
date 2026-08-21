@@ -488,6 +488,43 @@ describe("playback coordinator", function()
         assert.are.same({ 0.25 }, adapter.seeks)
     end)
 
+    it("hands off a cross-resource jump from paused through stop acknowledgement", function()
+        local clips = clips_fixture()
+        clips[3].range_pos0 = "p40"
+        clips[3].range_pos1 = "p50"
+        clips[3].range_start = 40
+        clips[3].range_end = 50
+        local coordinator, scheduler, adapter, materializer = make_fixture(clips)
+        assert.is_true(coordinator:start())
+        mark_ready(adapter)
+        scheduler:fire_any()
+        assert.is_true(coordinator:pause())
+        assert.are.equal("paused", coordinator:getState())
+        adapter.stop_waits = true
+
+        assert.is_true(coordinator:playFromXPointer("p42", "p48"))
+        assert.are.equal("stopping", coordinator:getState())
+        assert.are.equal(1, #adapter.loads)
+        assert.are.equal(0, #materializer.removed)
+        assert.are.equal(PlaybackCoordinator.STATES.PLAYING, coordinator.intent)
+
+        scheduler:fire_any()
+        assert.are.equal(1, #adapter.loads)
+        adapter.stop_waits = false
+        adapter.state = "idle"
+        scheduler:fire_any()
+        assert.are.equal("loading", coordinator:getState())
+        assert.are.equal(2, #adapter.loads)
+        assert.are.equal(1, #materializer.removed)
+        assert.are.equal(3, coordinator.current_clip_index)
+
+        mark_ready(adapter)
+        scheduler:fire_any()
+        assert.are.equal("playing", coordinator:getState())
+        assert.are.same({ 0.25 }, adapter.seeks)
+        assert.are.equal(2, adapter.plays)
+    end)
+
     it("rejects jumps while loading, stopping, errored, or closed", function()
         local loading = make_fixture(clips_fixture())
         assert.is_true(loading:start())
