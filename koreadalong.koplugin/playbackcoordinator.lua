@@ -57,6 +57,24 @@ local function same_resolver_context(left, right)
         and left.text_path == right.text_path
 end
 
+local function valid_xpointer(pointer)
+    return type(pointer) == "string" and pointer ~= ""
+end
+
+local function compare_xpointers(document, left, right)
+    local compared, compare_error = invoke(
+        document,
+        "compareXPointers",
+        left,
+        right
+    )
+    if type(compared) ~= "number"
+        or (compared ~= -1 and compared ~= 0 and compared ~= 1) then
+        return nil, compare_error or "unable to compare XPointers"
+    end
+    return compared
+end
+
 function PlaybackCoordinator.new(options)
     options = options or {}
     local clips = options.clips or {}
@@ -238,14 +256,12 @@ function PlaybackCoordinator:_next_clip(index)
     return nil
 end
 
-function PlaybackCoordinator:_resolve_range(index)
+function PlaybackCoordinator:_get_range(index)
     local cached = self.range_cache[index]
     if cached == false then
-        self:_clear_overlay()
         return nil
     end
     if cached then
-        self:_show_range(cached)
         return cached
     end
 
@@ -263,15 +279,80 @@ function PlaybackCoordinator:_resolve_range(index)
         -- Fragment failures are expected for unsupported Storyteller targets
         -- and must not interrupt audio or produce repeated dialogs.
         self.range_cache[index] = false
-        self:_clear_overlay()
         return nil, resolve_error
     end
     self.range_cache[index] = {
         pos0 = range.pos0,
         pos1 = range.pos1,
     }
-    self:_show_range(self.range_cache[index])
     return self.range_cache[index]
+end
+
+function PlaybackCoordinator:_resolve_range(index)
+    local range = self:_get_range(index)
+    if not range then
+        self:_clear_overlay()
+        return nil
+    end
+    self:_show_range(range)
+    return range
+end
+
+function PlaybackCoordinator:_find_clip_for_selection(pos0, pos1)
+    if not valid_xpointer(pos0) or not valid_xpointer(pos1) then
+        return nil, nil, "selected text has no valid XPointer range"
+    end
+
+    local selection_order, selection_error = compare_xpointers(
+        self.document,
+        pos0,
+        pos1
+    )
+    if not selection_order then
+        return nil, nil, selection_error
+    end
+    if selection_order ~= 1 then
+        return nil, nil, "selected text has an empty or reversed XPointer range"
+    end
+
+    for index = 1, #self.clips do
+        local range = self:_get_range(index)
+        if range then
+            -- Ranges are half-open. Strict comparisons exclude a selection
+            -- that only touches either boundary.
+            local selection_starts_before_range_end, compare_error =
+                compare_xpointers(self.document, pos0, range.pos1)
+            if not selection_starts_before_range_end then
+                return nil, nil, compare_error
+            end
+            local range_starts_before_selection_end
+            range_starts_before_selection_end, compare_error = compare_xpointers(
+                self.document,
+                range.pos0,
+                pos1
+            )
+            if not range_starts_before_selection_end then
+                return nil, nil, compare_error
+            end
+            if selection_starts_before_range_end == 1
+                and range_starts_before_selection_end == 1 then
+                return index, range
+            end
+        end
+    end
+    return nil, nil, "no media overlay segment contains the selected word"
+end
+
+function PlaybackCoordinator:canPlayFromXPointer(pos0, pos1)
+    if self.closed
+        or (self.state ~= PlaybackCoordinator.STATES.IDLE
+            and self.state ~= PlaybackCoordinator.STATES.ENDED
+            and self.state ~= PlaybackCoordinator.STATES.PLAYING
+            and self.state ~= PlaybackCoordinator.STATES.PAUSED) then
+        return false
+    end
+    local index = self:_find_clip_for_selection(pos0, pos1)
+    return index ~= nil
 end
 
 function PlaybackCoordinator:_update_overlay(audio_path, position)
@@ -330,7 +411,7 @@ function PlaybackCoordinator:_prepare_resource(index)
     return true
 end
 
-function PlaybackCoordinator:_prepare_same_resource(index)
+function PlaybackCoordinator:_prepare_same_resource(index, range)
     local clip = self.clips[index]
     self.current_clip_index = index
     local seek_ok, seek_error = invoke(
@@ -348,6 +429,9 @@ function PlaybackCoordinator:_prepare_same_resource(index)
     self.intent = PlaybackCoordinator.STATES.PLAYING
     self.state = PlaybackCoordinator.STATES.PLAYING
     self:_schedule_poll()
+    if range then
+        self:_show_range(range)
+    end
     return true
 end
 
@@ -567,6 +651,64 @@ function PlaybackCoordinator:toggle()
         return self:resume()
     end
     return self:start()
+end
+
+function PlaybackCoordinator:playFromXPointer(pos0, pos1)
+    if self.closed then
+        return nil, "read-along coordinator is closed"
+    end
+    if self.state == PlaybackCoordinator.STATES.LOADING then
+        return nil, "audio is still loading; wait for it to finish"
+    end
+    if self.state == PlaybackCoordinator.STATES.STOPPING then
+        return nil, "audio is still stopping; wait for it to finish"
+    end
+    if self.state == PlaybackCoordinator.STATES.ERROR then
+        return nil, "read-along audio failed; reopen the document to retry"
+    end
+    if self.state ~= PlaybackCoordinator.STATES.IDLE
+        and self.state ~= PlaybackCoordinator.STATES.ENDED
+        and self.state ~= PlaybackCoordinator.STATES.PLAYING
+        and self.state ~= PlaybackCoordinator.STATES.PAUSED then
+        return nil, "read-along is not ready to jump"
+    end
+
+    local index, range, selection_error = self:_find_clip_for_selection(
+        pos0,
+        pos1
+    )
+    if not index then
+        return nil, selection_error
+    end
+
+    local clip = self.clips[index]
+    if self.state == PlaybackCoordinator.STATES.PLAYING
+        or self.state == PlaybackCoordinator.STATES.PAUSED then
+        if self.materialized_path
+            and self.current_audio_path == clip.audio_path then
+            return self:_prepare_same_resource(index, range)
+        end
+        if not self.materialized_path or not self.current_audio_path then
+            return nil, "current audio resource is not ready"
+        end
+        self.generation = self.generation + 1
+        self:_unschedule_poll()
+        self.intent = PlaybackCoordinator.STATES.PLAYING
+        self:_clear_overlay()
+        return self:_begin_stopping{
+            kind = "resource",
+            next_index = index,
+        }
+    end
+
+    if self.materialized_path or self.current_audio_path then
+        return nil, "audio resource ownership is still active"
+    end
+    self.error = nil
+    self.intent = PlaybackCoordinator.STATES.PLAYING
+    self.generation = self.generation + 1
+    self:_unschedule_poll()
+    return self:_prepare_resource(index)
 end
 
 function PlaybackCoordinator:stop()

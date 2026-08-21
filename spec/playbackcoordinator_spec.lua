@@ -194,6 +194,7 @@ local function make_fixture(clips)
         calls = {},
         fail = {},
     }
+    local pointer_positions = {}
     function resolver.resolve(_, clip, next_clip)
         resolver.calls[#resolver.calls + 1] = {
             clip = clip,
@@ -202,10 +203,32 @@ local function make_fixture(clips)
         if resolver.fail[clip.text_fragment] then
             return nil, "unsupported fragment"
         end
+        local pos0 = clip.range_pos0 or "pos0-" .. clip.text_fragment
+        local pos1 = clip.range_pos1 or "pos1-" .. clip.text_fragment
+        local range_start = clip.range_start or #resolver.calls * 10
+        local range_end = clip.range_end or range_start + 1
+        pointer_positions[pos0] = range_start
+        pointer_positions[pos1] = range_end
         return {
-            pos0 = "pos0-" .. clip.text_fragment,
-            pos1 = "pos1-" .. clip.text_fragment,
+            pos0 = pos0,
+            pos1 = pos1,
         }
+    end
+    local document = {}
+    function document:compareXPointers(left, right)
+        local left_position = tonumber(left:match("^p([0-9]+)$"))
+            or pointer_positions[left]
+        local right_position = tonumber(right:match("^p([0-9]+)$"))
+            or pointer_positions[right]
+        if not left_position or not right_position then
+            return nil
+        end
+        if left_position < right_position then
+            return 1
+        elseif left_position > right_position then
+            return -1
+        end
+        return 0
     end
     local timeline = assert(Timeline.new(clips))
     local errors = {}
@@ -219,7 +242,7 @@ local function make_fixture(clips)
         materializer = materializer,
         timeline = timeline,
         resolver = resolver,
-        document = {},
+        document = document,
         overlay = overlay,
         clips = clips,
         on_range = function(pos0, pos1)
@@ -296,6 +319,206 @@ describe("playback coordinator", function()
         assert.are.same({}, adapter.seeks)
         assert.are.equal(1, #resolver.calls)
         assert.are.equal("two", resolver.calls[1].next_clip.text_fragment)
+    end)
+
+    it("finds the ordered segment containing a selected range with half-open boundaries", function()
+        local clips = clips_fixture()
+        clips[1].range_pos0 = "p10"
+        clips[1].range_pos1 = "p20"
+        clips[1].range_start = 10
+        clips[1].range_end = 20
+        clips[2].range_pos0 = "p20"
+        clips[2].range_pos1 = "p30"
+        clips[2].range_start = 20
+        clips[2].range_end = 30
+        clips[3].range_pos0 = "p40"
+        clips[3].range_pos1 = "p50"
+        clips[3].range_start = 40
+        clips[3].range_end = 50
+
+        local coordinator = make_fixture(clips)
+        assert.is_true(coordinator:canPlayFromXPointer("p12", "p18"))
+
+        coordinator = make_fixture(clips)
+        assert.is_true(coordinator:playFromXPointer("p20", "p25"))
+        assert.are.equal(2, coordinator.current_clip_index)
+
+        coordinator = make_fixture(clips)
+        local ok, error_message = coordinator:playFromXPointer("p5", "p10")
+        assert.is_nil(ok)
+        assert.matches("no media overlay segment", error_message)
+
+        coordinator = make_fixture(clips)
+        ok, error_message = coordinator:playFromXPointer("p30", "p40")
+        assert.is_nil(ok)
+        assert.matches("no media overlay segment", error_message)
+    end)
+
+    it("skips a resolver miss and finds a later valid segment", function()
+        local clips = clips_fixture()
+        clips[1].range_pos0 = "p10"
+        clips[1].range_pos1 = "p20"
+        clips[1].range_start = 10
+        clips[1].range_end = 20
+        clips[2].range_pos0 = "p20"
+        clips[2].range_pos1 = "p30"
+        clips[2].range_start = 20
+        clips[2].range_end = 30
+        local coordinator, _, _, _, resolver = make_fixture(clips)
+        resolver.fail.one = true
+
+        assert.is_true(coordinator:playFromXPointer("p22", "p28"))
+        assert.are.equal(2, coordinator.current_clip_index)
+        assert.are.equal(2, #resolver.calls)
+        assert.is_false(coordinator.range_cache[1])
+    end)
+
+    it("leaves active playback unchanged when no segment matches", function()
+        local clips = clips_fixture()
+        clips[1].range_pos0 = "p10"
+        clips[1].range_pos1 = "p20"
+        clips[1].range_start = 10
+        clips[1].range_end = 20
+        clips[2].range_pos0 = "p20"
+        clips[2].range_pos1 = "p30"
+        clips[2].range_start = 20
+        clips[2].range_end = 30
+        local coordinator, scheduler, adapter, _, _, overlay = make_fixture(clips)
+        assert.is_true(coordinator:start())
+        mark_ready(adapter)
+        scheduler:fire_any()
+        local command_count = #adapter.commands
+        local load_count = #adapter.loads
+        local range_count = #overlay.ranges
+        local materialized_path = coordinator.materialized_path
+
+        local ok, error_message = coordinator:playFromXPointer("p60", "p70")
+        assert.is_nil(ok)
+        assert.matches("no media overlay segment", error_message)
+        assert.are.equal("playing", coordinator:getState())
+        assert.are.equal(command_count, #adapter.commands)
+        assert.are.equal(load_count, #adapter.loads)
+        assert.are.equal(range_count, #overlay.ranges)
+        assert.are.equal(materialized_path, coordinator.materialized_path)
+    end)
+
+    it("starts an idle jump at the selected clip and seeks after readiness", function()
+        local clips = clips_fixture()
+        clips[3].range_pos0 = "p40"
+        clips[3].range_pos1 = "p50"
+        clips[3].range_start = 40
+        clips[3].range_end = 50
+        local coordinator, scheduler, adapter = make_fixture(clips)
+
+        assert.is_true(coordinator:playFromXPointer("p42", "p48"))
+        assert.are.equal("loading", coordinator:getState())
+        assert.are.equal(3, coordinator.current_clip_index)
+        assert.are.equal(1, #adapter.loads)
+        assert.are.same({}, adapter.seeks)
+
+        mark_ready(adapter)
+        scheduler:fire_any()
+        assert.are.equal("playing", coordinator:getState())
+        assert.are.same({ 0.25 }, adapter.seeks)
+        assert.are.equal(1, adapter.plays)
+    end)
+
+    it("jumps directly within the same resource from playing and paused states", function()
+        local clips = clips_fixture()
+        clips[1].range_pos0 = "p10"
+        clips[1].range_pos1 = "p20"
+        clips[1].range_start = 10
+        clips[1].range_end = 20
+        clips[2].range_pos0 = "p20"
+        clips[2].range_pos1 = "p30"
+        clips[2].range_start = 20
+        clips[2].range_end = 30
+        local coordinator, scheduler, adapter, _, _, overlay = make_fixture(clips)
+        assert.is_true(coordinator:start())
+        mark_ready(adapter)
+        scheduler:fire_any()
+
+        assert.is_true(coordinator:playFromXPointer("p22", "p28"))
+        assert.are.equal("playing", coordinator:getState())
+        assert.are.same({ 1 }, adapter.seeks)
+        assert.are.equal(2, coordinator.current_clip_index)
+        assert.are.same({ "p20", "p30" }, overlay.ranges[#overlay.ranges])
+
+        assert.is_true(coordinator:pause())
+        assert.are.equal("paused", coordinator:getState())
+        assert.is_true(coordinator:playFromXPointer("p12", "p18"))
+        assert.are.equal("playing", coordinator:getState())
+        assert.are.same({ 1, 0 }, adapter.seeks)
+        assert.are.equal(3, adapter.plays)
+        assert.are.equal(1, coordinator.current_clip_index)
+    end)
+
+    it("hands off a cross-resource jump through asynchronous stop acknowledgement", function()
+        local clips = clips_fixture()
+        clips[3].range_pos0 = "p40"
+        clips[3].range_pos1 = "p50"
+        clips[3].range_start = 40
+        clips[3].range_end = 50
+        local coordinator, scheduler, adapter, materializer = make_fixture(clips)
+        assert.is_true(coordinator:start())
+        mark_ready(adapter)
+        scheduler:fire_any()
+        adapter.stop_waits = true
+
+        assert.is_true(coordinator:playFromXPointer("p42", "p48"))
+        assert.are.equal("stopping", coordinator:getState())
+        assert.are.equal(1, #adapter.loads)
+        assert.are.equal(0, #materializer.removed)
+        assert.are.equal(PlaybackCoordinator.STATES.PLAYING, coordinator.intent)
+
+        scheduler:fire_any()
+        assert.are.equal(1, #adapter.loads)
+        assert.are.equal(0, #materializer.removed)
+        adapter.stop_waits = false
+        adapter.state = "idle"
+        scheduler:fire_any()
+        assert.are.equal("loading", coordinator:getState())
+        assert.are.equal(2, #adapter.loads)
+        assert.are.equal(1, #materializer.removed)
+        assert.are.equal(3, coordinator.current_clip_index)
+
+        mark_ready(adapter)
+        scheduler:fire_any()
+        assert.are.equal("playing", coordinator:getState())
+        assert.are.same({ 0.25 }, adapter.seeks)
+    end)
+
+    it("rejects jumps while loading, stopping, errored, or closed", function()
+        local loading = make_fixture(clips_fixture())
+        assert.is_true(loading:start())
+        local ok, error_message = loading:playFromXPointer("p1", "p2")
+        assert.is_nil(ok)
+        assert.matches("still loading", error_message)
+
+        local stopping, scheduler, adapter = make_fixture(clips_fixture())
+        assert.is_true(stopping:start())
+        mark_ready(adapter)
+        scheduler:fire_any()
+        adapter.stop_waits = true
+        assert.is_true(stopping:stop())
+        ok, error_message = stopping:playFromXPointer("p1", "p2")
+        assert.is_nil(ok)
+        assert.matches("still stopping", error_message)
+
+        local errored, error_scheduler, error_adapter = make_fixture(clips_fixture())
+        assert.is_true(errored:start())
+        error_adapter.state = "error"
+        error_adapter.error = "decoder disconnected"
+        error_scheduler:fire_any()
+        ok, error_message = errored:playFromXPointer("p1", "p2")
+        assert.is_nil(ok)
+        assert.matches("reopen the document", error_message)
+
+        local closed = make_fixture(clips_fixture())
+        assert.is_true(closed:close())
+        ok, error_message = closed:playFromXPointer("p1", "p2")
+        assert.is_nil(ok)
+        assert.matches("closed", error_message)
     end)
 
     it("rejects stop during loading and closes the unresolved session safely", function()
