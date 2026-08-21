@@ -28,6 +28,10 @@ Open an EPUB containing EPUB 3 Media Overlays. Supported books gain a
 **Read along** menu with **Start**, **Pause/Resume**, and **Stop** controls.
 Books without media overlays are unaffected and do not show the menu.
 
+While reading a supported book, hold a word and choose **Read from here** in
+KOReader's highlight dialog to start narration at that word's overlay segment.
+The selection is transient and is not saved as an annotation.
+
 The current MVP supports ordinary Storyteller-style SMIL targets using XHTML
 element IDs and follows narration onto the page containing the active target.
 Web Text Fragment targets, complex DOM ranges, and Kindle audio are not yet
