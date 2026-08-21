@@ -69,6 +69,7 @@ function PlaybackCoordinator.new(options)
         resolver = options.resolver,
         document = options.document,
         overlay = options.overlay,
+        on_range = options.on_range,
         on_error = options.on_error,
         clips = clips,
         state = PlaybackCoordinator.STATES.IDLE,
@@ -171,6 +172,13 @@ function PlaybackCoordinator:_clear_overlay()
     invoke_optional(self.overlay, "clear")
 end
 
+function PlaybackCoordinator:_show_range(range)
+    invoke_optional(self.overlay, "setRange", range.pos0, range.pos1)
+    if type(self.on_range) == "function" then
+        pcall(self.on_range, range.pos0, range.pos1)
+    end
+end
+
 function PlaybackCoordinator:_remove_materialized_audio()
     if self.materialized_path then
         local removed, remove_error = invoke(
@@ -237,7 +245,7 @@ function PlaybackCoordinator:_resolve_range(index)
         return nil
     end
     if cached then
-        invoke_optional(self.overlay, "setRange", cached.pos0, cached.pos1)
+        self:_show_range(cached)
         return cached
     end
 
@@ -262,7 +270,7 @@ function PlaybackCoordinator:_resolve_range(index)
         pos0 = range.pos0,
         pos1 = range.pos1,
     }
-    invoke_optional(self.overlay, "setRange", range.pos0, range.pos1)
+    self:_show_range(self.range_cache[index])
     return self.range_cache[index]
 end
 

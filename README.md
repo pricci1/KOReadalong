@@ -29,9 +29,9 @@ Open an EPUB containing EPUB 3 Media Overlays. Supported books gain a
 Books without media overlays are unaffected and do not show the menu.
 
 The current MVP supports ordinary Storyteller-style SMIL targets using XHTML
-element IDs. Web Text Fragment targets, complex DOM ranges, Kindle audio, and
-automatic navigation to off-screen narration are not yet supported. Underlines
-are ephemeral and never create KOReader annotations.
+element IDs and follows narration onto the page containing the active target.
+Web Text Fragment targets, complex DOM ranges, and Kindle audio are not yet
+supported. Underlines are ephemeral and never create KOReader annotations.
 
 ## Development
 

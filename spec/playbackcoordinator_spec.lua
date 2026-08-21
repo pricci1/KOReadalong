@@ -209,6 +209,7 @@ local function make_fixture(clips)
     end
     local timeline = assert(Timeline.new(clips))
     local errors = {}
+    local ranges_shown = {}
     local coordinator = PlaybackCoordinator.new{
         adapter = adapter,
         scheduler = scheduler,
@@ -221,11 +222,15 @@ local function make_fixture(clips)
         document = {},
         overlay = overlay,
         clips = clips,
+        on_range = function(pos0, pos1)
+            ranges_shown[#ranges_shown + 1] = { pos0, pos1 }
+        end,
         on_error = function(error_message)
             errors[#errors + 1] = error_message
         end,
     }
-    return coordinator, scheduler, adapter, materializer, resolver, overlay, errors
+    return coordinator, scheduler, adapter, materializer, resolver, overlay, errors,
+        ranges_shown
 end
 
 local function clips_fixture()
@@ -247,9 +252,9 @@ local function clips_fixture()
             clip_end = 2,
         },
         {
-            text_path = "book/chapter.xhtml",
+            text_path = "book/next-chapter.xhtml",
             text_fragment = "three",
-            spine_index = 0,
+            spine_index = 1,
             audio_path = "book/second.wav",
             clip_begin = 0.25,
             clip_end = 1,
@@ -321,7 +326,7 @@ describe("playback coordinator", function()
     end)
 
     it("moves through same-resource clips, clears gaps, and caches ranges", function()
-        local coordinator, scheduler, adapter, _, resolver, overlay =
+        local coordinator, scheduler, adapter, _, resolver, overlay, _, ranges_shown =
             make_fixture(clips_fixture())
         coordinator:start()
         mark_ready(adapter)
@@ -335,6 +340,7 @@ describe("playback coordinator", function()
         adapter.position = 1.4
         scheduler:fire_any()
         assert.are.equal("pos0-two", overlay.ranges[#overlay.ranges][1])
+        assert.are.same({ "pos0-two", "pos1-two" }, ranges_shown[#ranges_shown])
         assert.are.equal(calls_after_one + 1, #resolver.calls)
 
         adapter.position = 2.1
@@ -366,8 +372,8 @@ describe("playback coordinator", function()
         assert.are.equal(0, scheduler.tasks[coordinator.poll_action] or 0)
     end)
 
-    it("hands off resources only after asynchronous stop acknowledgement", function()
-        local coordinator, scheduler, adapter, materializer =
+    it("hands off to the next chapter only after asynchronous stop acknowledgement", function()
+        local coordinator, scheduler, adapter, materializer, _, _, _, ranges_shown =
             make_fixture(clips_fixture())
         coordinator:start()
         mark_ready(adapter)
@@ -394,6 +400,7 @@ describe("playback coordinator", function()
         scheduler:fire_any()
         assert.are.equal(2, #adapter.loads)
         assert.are.equal(2, adapter.plays)
+        assert.are.same({ "pos0-three", "pos1-three" }, ranges_shown[#ranges_shown])
     end)
 
     it("ends cleanly after the final ordered clip", function()

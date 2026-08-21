@@ -6,6 +6,7 @@ local MpvAudio = require("mpvaudio")
 local PlaybackCoordinator = require("playbackcoordinator")
 local Timeline = require("timeline")
 local UnderlineOverlay = require("underlineoverlay")
+local Event = require("ui/event")
 local InfoMessage = require("ui/widget/infomessage")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
@@ -19,6 +20,15 @@ local function refresh_overlay(self)
     if self.overlay then
         self.overlay:refresh()
     end
+end
+
+local function follow_range(self, pos0, pos1)
+    if self.document:isXPointerInCurrentPage(pos0)
+        or self.document:isXPointerInCurrentPage(pos1) then
+        return
+    end
+    self.ui:handleEvent(Event:new("GotoXPointer", pos0))
+    refresh_overlay(self)
 end
 
 function KoReadalong:_show_error(error_message)
@@ -77,6 +87,9 @@ function KoReadalong:onReaderReady()
         document = self.document,
         overlay = self.overlay,
         clips = clips,
+        on_range = function(pos0, pos1)
+            follow_range(self, pos0, pos1)
+        end,
         on_error = function(error_message)
             self:_show_error(error_message)
         end,

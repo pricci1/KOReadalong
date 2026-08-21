@@ -172,5 +172,5 @@ Kindle dependency.
 1. Parse package metadata, SMIL clocks, nested sequences, and Storyteller fixtures.
 2. Resolve fragment IDs to KOReader text anchors and paint a static ephemeral underline.
 3. Connect the desktop adapter to playback and synchronize the active clip.
-4. Add navigation, playback controls, and representative rerender/page tests.
+4. Add navigation, playback controls, and representative rerender/page tests. (MVP complete.)
 5. Implement and test the Kindle audio/Bluetooth adapter on supported hardware.

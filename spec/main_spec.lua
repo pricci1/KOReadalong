@@ -8,6 +8,8 @@ describe("KoReadalong lifecycle and menu", function()
     local info_message
     local registered_menu_widget
     local overlays_available
+    local goto_events
+    local range_visible
 
     local clips = {
         {
@@ -57,6 +59,8 @@ describe("KoReadalong lifecycle and menu", function()
         }
         overlays_available = true
         registered_menu_widget = nil
+        goto_events = {}
+        range_visible = true
         function overlay.new(options)
             overlay.new_count = overlay.new_count + 1
             overlay.options = options
@@ -155,6 +159,13 @@ describe("KoReadalong lifecycle and menu", function()
         package.preload["ui/uimanager"] = function()
             return ui_manager
         end
+        package.preload["ui/event"] = function()
+            return {
+                new = function(_, name, ...)
+                    return { name = name, args = { ... } }
+                end,
+            }
+        end
         package.preload["ui/widget/infomessage"] = function()
             return info_message
         end
@@ -175,8 +186,15 @@ describe("KoReadalong lifecycle and menu", function()
             document = {
                 provider = "crengine",
                 getDocumentFileContent = function() return "bytes" end,
+                isXPointerInCurrentPage = function()
+                    return range_visible
+                end,
             },
             ui = {
+                handleEvent = function(_, event)
+                    goto_events[#goto_events + 1] = event
+                    range_visible = true
+                end,
                 menu = {
                     registerToMainMenu = function(_, widget)
                         registered_menu_widget = widget
@@ -198,6 +216,7 @@ describe("KoReadalong lifecycle and menu", function()
             "mpvaudio",
             "playbackcoordinator",
             "ui/uimanager",
+            "ui/event",
             "ui/widget/infomessage",
             "gettext",
             "ui/widget/container/widgetcontainer",
@@ -279,5 +298,20 @@ describe("KoReadalong lifecycle and menu", function()
         plugin:onCloseDocument()
         plugin:onCloseWidget()
         assert.are.equal(1, coordinator.close_count)
+    end)
+
+    it("follows an active range only when it is outside the current page", function()
+        plugin:onReaderReady()
+        local on_range = plugin.coordinator.options.on_range
+
+        on_range("visible-start", "visible-end")
+        assert.are.equal(0, #goto_events)
+
+        range_visible = false
+        on_range("next-start", "next-end")
+        assert.are.equal(1, #goto_events)
+        assert.are.equal("GotoXPointer", goto_events[1].name)
+        assert.are.equal("next-start", goto_events[1].args[1])
+        assert.are.equal(1, overlay.refresh_count)
     end)
 end)
