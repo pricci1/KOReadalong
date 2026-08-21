@@ -10,6 +10,10 @@ KoReadalong is a KOReader plugin for EPUB 3 Media Overlays. Keep the core platfo
 - `make run` starts the pinned desktop KOReader with this plugin linked into it.
 - `make run-headless` starts KOReader under Xvfb for smoke testing in an orb.
 
+## Fixtures
+
+- `spec/fixtures/chapter-transition.epub` is a small, sanitized EPUB with synthetic silent audio for chapter-handoff tests. It preserves the regression shape from the original report: narrated content at spine index 3, a non-overlay item at index 4, and the next narrated chapter at index 5.
+
 ## Runtime debugging
 
 - Prefer the checksum-pinned runtime under `.cache/koreader` for reproducible development. A user-installed `/usr/bin/koreader` and `/usr/lib/koreader` may also exist; record which runtime produced a result and compare installed plugin files with the checkout before diagnosing version-specific behavior.
