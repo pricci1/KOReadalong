@@ -3,6 +3,7 @@ package.path = "./koreadalong.koplugin/?.lua;" .. package.path
 describe("KoReadalong lifecycle and menu", function()
     local plugin
     local overlay
+    local highlight
     local coordinator
     local ui_manager
     local info_message
@@ -57,6 +58,32 @@ describe("KoReadalong lifecycle and menu", function()
             clear_count = 0,
             deactivate_count = 0,
         }
+        highlight = {
+            buttons = {},
+            add_count = 0,
+            highlight_from_hold_count = 0,
+            close_count = 0,
+            clear_count = 0,
+            can_jump = true,
+        }
+        function highlight:addToHighlightDialog(key, callback)
+            self.add_count = self.add_count + 1
+            self.buttons[key] = callback
+        end
+        function highlight:highlightFromHoldPos()
+            self.highlight_from_hold_count = self.highlight_from_hold_count + 1
+            if self.next_selected_text then
+                self.selected_text = self.next_selected_text
+            end
+        end
+        function highlight:onClose()
+            self.close_count = self.close_count + 1
+            self.selected_text = nil
+        end
+        function highlight:clear()
+            self.clear_count = self.clear_count + 1
+            self.selected_text = nil
+        end
         overlays_available = true
         registered_menu_widget = nil
         goto_events = {}
@@ -87,6 +114,8 @@ describe("KoReadalong lifecycle and menu", function()
             state = "idle",
             close_count = 0,
             stop_count = 0,
+            play_from_calls = {},
+            can_jump = true,
         }
         function coordinator.new(options)
             coordinator.options = options
@@ -119,6 +148,17 @@ describe("KoReadalong lifecycle and menu", function()
             function instance:stop()
                 self.stop_count = self.stop_count + 1
                 self.state = "idle"
+            end
+            function instance:canPlayFromXPointer(pos0, pos1)
+                self.can_play_arguments = { pos0, pos1 }
+                return self.can_jump
+            end
+            function instance:playFromXPointer(pos0, pos1)
+                self.play_from_calls[#self.play_from_calls + 1] = { pos0, pos1 }
+                if self.play_from_error then
+                    return nil, self.play_from_error
+                end
+                return true
             end
             function instance:close()
                 if self.state ~= "closed" then
@@ -191,6 +231,7 @@ describe("KoReadalong lifecycle and menu", function()
                 end,
             },
             ui = {
+                highlight = highlight,
                 handleEvent = function(_, event)
                     goto_events[#goto_events + 1] = event
                     range_visible = true
@@ -231,6 +272,7 @@ describe("KoReadalong lifecycle and menu", function()
         plugin:onReaderReady()
         assert.is_nil(plugin.overlay)
         assert.is_nil(registered_menu_widget)
+        assert.are.equal(0, highlight.add_count)
     end)
 
     it("capability-gates non-CRe documents", function()
@@ -238,6 +280,7 @@ describe("KoReadalong lifecycle and menu", function()
         plugin:onReaderReady()
         assert.is_nil(plugin.overlay)
         assert.is_nil(registered_menu_widget)
+        assert.are.equal(0, highlight.add_count)
     end)
 
     it("registers the menu conditionally and exposes dynamic controls", function()
@@ -245,6 +288,8 @@ describe("KoReadalong lifecycle and menu", function()
         plugin:onReaderReady()
         assert.are.equal(1, overlay.new_count)
         assert.are.equal(1, overlay.register_count)
+        assert.are.equal(1, highlight.add_count)
+        assert.is_function(highlight.buttons["12_read_from_here"])
         assert.are.equal(plugin, registered_menu_widget)
 
         local items = {}
@@ -270,6 +315,53 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal("Unavailable", submenu[1].text_func())
         assert.is_false(submenu[1].enabled_func())
         assert.is_false(submenu[2].enabled_func())
+    end)
+
+    it("shows the selection action only for usable XPointers and routes its callback", function()
+        plugin:onReaderReady()
+        highlight.selected_text = {
+            pos0 = "word-start",
+            pos1 = "word-end",
+        }
+        local action = highlight.buttons["12_read_from_here"](highlight)
+        assert.are.equal("Read from here", action.text)
+        assert.is_true(action.show_in_highlight_dialog_func())
+        assert.are.same({ "word-start", "word-end" }, coordinator.can_play_arguments)
+
+        action.callback()
+        assert.are.equal(1, highlight.highlight_from_hold_count)
+        assert.are.equal(1, highlight.close_count)
+        assert.are.equal(0, highlight.clear_count)
+        assert.are.same({
+            { "word-start", "word-end" },
+        }, coordinator.play_from_calls)
+        assert.are.equal(0, #ui_manager.shown)
+
+        highlight.selected_text = {}
+        action = highlight.buttons["12_read_from_here"](highlight)
+        assert.is_false(action.show_in_highlight_dialog_func())
+    end)
+
+    it("closes the transient selection and reports jump errors", function()
+        plugin:onReaderReady()
+        highlight.selected_text = {
+            pos0 = "word-start",
+            pos1 = "word-end",
+        }
+        coordinator.play_from_error = "no media overlay segment contains the selected word"
+        local action = highlight.buttons["12_read_from_here"](highlight)
+        action.callback()
+
+        assert.are.equal(1, highlight.highlight_from_hold_count)
+        assert.are.equal(1, highlight.close_count)
+        assert.is_nil(highlight.selected_text)
+        assert.are.equal(1, #ui_manager.shown)
+        assert.matches("no media overlay segment", ui_manager.shown[1].text)
+
+        action.callback()
+        assert.are.equal(2, highlight.close_count)
+        assert.are.equal(2, #ui_manager.shown)
+        assert.matches("no word is selected", ui_manager.shown[2].text)
     end)
 
     it("shows explicit coordinator errors and routes rerender lifecycle", function()

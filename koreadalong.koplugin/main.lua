@@ -31,6 +31,26 @@ local function follow_range(self, pos0, pos1)
     refresh_overlay(self)
 end
 
+local function selected_xpointers(highlight)
+    local selected_text = highlight and highlight.selected_text
+    if not selected_text
+        or type(selected_text.pos0) ~= "string"
+        or selected_text.pos0 == ""
+        or type(selected_text.pos1) ~= "string"
+        or selected_text.pos1 == "" then
+        return nil
+    end
+    return selected_text.pos0, selected_text.pos1
+end
+
+local function close_highlight(highlight)
+    if type(highlight.onClose) == "function" then
+        highlight:onClose()
+    elseif type(highlight.clear) == "function" then
+        highlight:clear()
+    end
+end
+
 function KoReadalong:_show_error(error_message)
     UIManager:show(InfoMessage:new{
         text = _("Read along: ") .. tostring(error_message),
@@ -39,6 +59,61 @@ end
 
 function KoReadalong:_read_document_file(path)
     return self.document:getDocumentFileContent(path)
+end
+
+function KoReadalong:_register_highlight_action()
+    local highlight = self.ui and self.ui.highlight
+    if not highlight
+        or type(highlight.addToHighlightDialog) ~= "function" then
+        return
+    end
+
+    highlight:addToHighlightDialog("12_read_from_here", function(this)
+        return {
+            text = _("Read from here"),
+            show_in_highlight_dialog_func = function()
+                local pos0, pos1 = selected_xpointers(this)
+                if not pos0 then
+                    return false
+                end
+                local can_jump = self.coordinator
+                    and self.coordinator.canPlayFromXPointer
+                if type(can_jump) ~= "function" then
+                    return false
+                end
+                local ok, accepted = pcall(
+                    can_jump,
+                    self.coordinator,
+                    pos0,
+                    pos1
+                )
+                return ok and accepted == true
+            end,
+            callback = function()
+                if type(this.highlightFromHoldPos) == "function" then
+                    this:highlightFromHoldPos()
+                end
+                local pos0, pos1 = selected_xpointers(this)
+                close_highlight(this)
+                if not pos0 then
+                    self:_show_error(_("no word is selected"))
+                    return
+                end
+
+                local called, started, error_message = pcall(
+                    self.coordinator.playFromXPointer,
+                    self.coordinator,
+                    pos0,
+                    pos1
+                )
+                if not called then
+                    self:_show_error(started)
+                elseif not started then
+                    self:_show_error(error_message)
+                end
+            end,
+        }
+    end)
 end
 
 function KoReadalong:onReaderReady()
@@ -94,6 +169,7 @@ function KoReadalong:onReaderReady()
             self:_show_error(error_message)
         end,
     }
+    self:_register_highlight_action()
     self.ui.menu:registerToMainMenu(self)
 end
 
