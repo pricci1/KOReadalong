@@ -107,6 +107,7 @@ local FragmentResolver = require("fragmentresolver")
 local UnderlineOverlay = require("underlineoverlay")
 local Materializer = require("materializer")
 local PlaybackCoordinator = require("playbackcoordinator")
+local PlaybackDialog = require("playbackdialog")
 local MpvAudio = require("mpvaudio")
 local MpvProcess = require("mpvprocess")
 local Event = require("ui/event")
@@ -119,6 +120,7 @@ local Smoke = WidgetContainer:extend{
 }
 
 local coordinator
+local playback_dialog
 local quit_scheduled = false
 
 local function fail(message)
@@ -127,6 +129,10 @@ local function fail(message)
     end
     quit_scheduled = true
     logger.err("SMOKE_FAILURE " .. message)
+    if playback_dialog then
+        UIManager:close(playback_dialog)
+        playback_dialog = nil
+    end
     if coordinator then
         coordinator:close()
     end
@@ -207,6 +213,21 @@ function Smoke:onReaderReady()
         fail("start failed: " .. tostring(start_error))
         return
     end
+    playback_dialog = PlaybackDialog:new{
+        coordinator = coordinator,
+        scheduler = UIManager,
+        on_error = function(error_message)
+            fail("playback dialog error: " .. tostring(error_message))
+        end,
+        on_close = function()
+            playback_dialog = nil
+        end,
+    }
+    UIManager:scheduleIn(0.2, function()
+        if playback_dialog and not quit_scheduled then
+            UIManager:show(playback_dialog)
+        end
+    end)
 
     local owned_dirs = assert(io.open(
         assert(os.getenv("KOREADALONG_SMOKE_OWNED_DIRS")),
@@ -227,6 +248,10 @@ function Smoke:onReaderReady()
             logger.info("SMOKE_EOF state=ended audio_removed=true")
             UIManager:scheduleIn(0.7, function()
                 local audio_dir = materializer.session_dir
+                if playback_dialog then
+                    UIManager:close(playback_dialog)
+                    playback_dialog = nil
+                end
                 coordinator:close()
                 if exists(audio_dir) then
                     fail("materialized audio directory remains")

@@ -146,21 +146,6 @@ function PlaybackCoordinator:getPlaybackStatus()
     }
 end
 
-function PlaybackCoordinator:getActionLabel()
-    if self.state == PlaybackCoordinator.STATES.PLAYING then
-        return "Pause"
-    elseif self.state == PlaybackCoordinator.STATES.PAUSED then
-        return "Resume"
-    elseif self.state == PlaybackCoordinator.STATES.LOADING then
-        return "Loading…"
-    elseif self.state == PlaybackCoordinator.STATES.STOPPING then
-        return "Stopping…"
-    elseif self.state == PlaybackCoordinator.STATES.ERROR then
-        return "Unavailable"
-    end
-    return "Start"
-end
-
 function PlaybackCoordinator:isActionEnabled()
     -- MpvAudio's ERROR state is terminal for this document session. Reopening
     -- the document is the recovery path; do not expose a Start action that

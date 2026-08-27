@@ -147,10 +147,10 @@ integration test alone opts into `--ao=null` as a clocked test sink; production
 does not add a null sink and reports a real no-sink failure. Deterministic
 tests inject process, transport, and timer boundaries. The playback coordinator
 consumes only the high-level adapter contract and owns resource transitions,
-timeline synchronization, and the compact reader controls.
+timeline synchronization, and the state exposed to the reader controls.
 
-An adapter error is terminal for the current document session: the compact
-menu disables both playback actions and reports that the document must be
+An adapter error is terminal for the current document session: the playback
+panel disables its transport actions and reports that the document must be
 reopened to retry. Resource replacement and final EOF first wait for the
 adapter's idle acknowledgement before removing the private extracted file.
 

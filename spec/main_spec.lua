@@ -125,16 +125,6 @@ describe("KoReadalong lifecycle and menu", function()
             function instance:getState()
                 return self.state
             end
-            function instance:getActionLabel()
-                if self.state == "playing" then
-                    return "Pause"
-                elseif self.state == "paused" then
-                    return "Resume"
-                elseif self.state == "error" then
-                    return "Unavailable"
-                end
-                return "Start"
-            end
             function instance:isActionEnabled()
                 return self.state ~= "loading"
                     and self.state ~= "stopping"
