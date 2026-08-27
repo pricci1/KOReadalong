@@ -4,6 +4,7 @@ local Materializer = require("materializer")
 local MediaOverlays = require("mediaoverlays")
 local MpvAudio = require("mpvaudio")
 local PlaybackCoordinator = require("playbackcoordinator")
+local PlaybackDialog = require("playbackdialog")
 local Timeline = require("timeline")
 local UnderlineOverlay = require("underlineoverlay")
 local Event = require("ui/event")
@@ -59,6 +60,23 @@ end
 
 function KoReadalong:_read_document_file(path)
     return self.document:getDocumentFileContent(path)
+end
+
+function KoReadalong:_show_playback_controls()
+    if self.playback_dialog then
+        return
+    end
+    self.playback_dialog = PlaybackDialog:new{
+        coordinator = self.coordinator,
+        scheduler = UIManager,
+        on_error = function(error_message)
+            self:_show_error(error_message)
+        end,
+        on_close = function()
+            self.playback_dialog = nil
+        end,
+    }
+    UIManager:show(self.playback_dialog)
 end
 
 function KoReadalong:_register_highlight_action()
@@ -181,29 +199,8 @@ function KoReadalong:addToMainMenu(menu_items)
     menu_items.read_along = {
         text = _("Read along"),
         sorting_hint = "more_tools",
-        sub_item_table_func = function()
-            return {
-                {
-                    text_func = function()
-                        return self.coordinator:getActionLabel()
-                    end,
-                    enabled_func = function()
-                        return self.coordinator:isActionEnabled()
-                    end,
-                    callback = function()
-                        self.coordinator:toggle()
-                    end,
-                },
-                {
-                    text = _("Stop"),
-                    enabled_func = function()
-                        return self.coordinator:isStopEnabled()
-                    end,
-                    callback = function()
-                        self.coordinator:stop()
-                    end,
-                },
-            }
+        callback = function()
+            self:_show_playback_controls()
         end,
     }
 end
@@ -247,6 +244,10 @@ function KoReadalong:onDocumentPartiallyRerendered()
 end
 
 function KoReadalong:onCloseDocument()
+    if self.playback_dialog then
+        UIManager:close(self.playback_dialog)
+        self.playback_dialog = nil
+    end
     if self.coordinator then
         self.coordinator:close()
     elseif self.overlay then

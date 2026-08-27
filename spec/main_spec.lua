@@ -5,6 +5,7 @@ describe("KoReadalong lifecycle and menu", function()
     local overlay
     local highlight
     local coordinator
+    local playback_dialog
     local ui_manager
     local info_message
     local registered_menu_widget
@@ -33,6 +34,7 @@ describe("KoReadalong lifecycle and menu", function()
             "materializer",
             "mpvaudio",
             "playbackcoordinator",
+            "playbackdialog",
         } do
             package.loaded[module_name] = nil
         end
@@ -177,11 +179,28 @@ describe("KoReadalong lifecycle and menu", function()
             return instance
         end
 
+        playback_dialog = {
+            new_count = 0,
+        }
+        function playback_dialog:new(options)
+            self.new_count = self.new_count + 1
+            local dialog = options
+            dialog.kind = "playback_dialog"
+            return dialog
+        end
+
         ui_manager = {
             shown = {},
+            closed = {},
         }
         function ui_manager:show(message)
             self.shown[#self.shown + 1] = message
+        end
+        function ui_manager:close(message)
+            self.closed[#self.closed + 1] = message
+            if message.on_close then
+                message.on_close()
+            end
         end
 
         info_message = {}
@@ -197,6 +216,9 @@ describe("KoReadalong lifecycle and menu", function()
         end
         package.preload["playbackcoordinator"] = function()
             return coordinator
+        end
+        package.preload["playbackdialog"] = function()
+            return playback_dialog
         end
         package.preload["mpvaudio"] = function()
             return { new = function() return {} end }
@@ -264,6 +286,7 @@ describe("KoReadalong lifecycle and menu", function()
             "materializer",
             "mpvaudio",
             "playbackcoordinator",
+            "playbackdialog",
             "ui/uimanager",
             "ui/event",
             "ui/widget/infomessage",
@@ -291,7 +314,7 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal(0, highlight.add_count)
     end)
 
-    it("registers the menu conditionally and exposes dynamic controls", function()
+    it("registers the menu conditionally and opens one playback panel", function()
         plugin:onReaderReady()
         plugin:onReaderReady()
         assert.are.equal(1, overlay.new_count)
@@ -302,27 +325,14 @@ describe("KoReadalong lifecycle and menu", function()
 
         local items = {}
         plugin:addToMainMenu(items)
-        local submenu = items.read_along.sub_item_table_func()
-        assert.are.equal("Start", submenu[1].text_func())
-        assert.is_true(submenu[1].enabled_func())
-        assert.is_false(submenu[2].enabled_func())
-        coordinator.state = "loading"
-        assert.is_false(submenu[2].enabled_func())
-        assert.are.equal(0, coordinator.stop_count)
-        coordinator.state = "idle"
-        submenu[1].callback()
-        assert.are.equal("Pause", submenu[1].text_func())
-        assert.are.equal("Stop", submenu[2].text)
-        assert.is_true(submenu[2].enabled_func())
-        submenu[1].callback()
-        assert.are.equal("Resume", submenu[1].text_func())
-        submenu[2].callback()
-        assert.is_false(submenu[2].enabled_func())
-
-        coordinator.state = "error"
-        assert.are.equal("Unavailable", submenu[1].text_func())
-        assert.is_false(submenu[1].enabled_func())
-        assert.is_false(submenu[2].enabled_func())
+        assert.are.equal("Read along", items.read_along.text)
+        assert.is_function(items.read_along.callback)
+        items.read_along.callback()
+        items.read_along.callback()
+        assert.are.equal(1, playback_dialog.new_count)
+        assert.are.equal(1, #ui_manager.shown)
+        assert.are.equal("playback_dialog", ui_manager.shown[1].kind)
+        assert.are.equal(coordinator, ui_manager.shown[1].coordinator)
     end)
 
     it("shows the selection action only for usable XPointers and routes its callback", function()
