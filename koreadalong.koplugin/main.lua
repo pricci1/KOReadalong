@@ -1,4 +1,5 @@
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
+local Dispatcher = require("dispatcher")
 local FragmentResolver = require("fragmentresolver")
 local Materializer = require("materializer")
 local MediaOverlays = require("mediaoverlays")
@@ -16,6 +17,19 @@ local KoReadalong = WidgetContainer:extend({
     name = "koreadalong",
     is_doc_only = true,
 })
+
+function KoReadalong:onDispatcherRegisterActions()
+    Dispatcher:registerAction("koreadalong_show_controls", {
+        category = "none",
+        event = "ShowReadAlongControls",
+        title = _("KoReadalong: show playback controls"),
+        reader = true,
+    })
+end
+
+function KoReadalong:init()
+    self:onDispatcherRegisterActions()
+end
 
 local function refresh_overlay(self)
     if self.overlay then
@@ -77,6 +91,14 @@ function KoReadalong:_show_playback_controls()
         end,
     }
     UIManager:show(self.playback_dialog)
+end
+
+function KoReadalong:onShowReadAlongControls()
+    if not self.coordinator then
+        return false
+    end
+    self:_show_playback_controls()
+    return true
 end
 
 function KoReadalong:_register_highlight_action()

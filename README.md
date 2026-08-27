@@ -29,6 +29,10 @@ Open an EPUB containing EPUB 3 Media Overlays. Supported books gain a
 **Start**, **Pause/Resume**, **Stop**, and **Close** controls. Books without
 media overlays are unaffected and do not show the menu.
 
+The panel can also be assigned to any native KOReader gesture. In **Gesture
+manager**, choose a gesture such as **Long-press on corner → Bottom right**,
+then select **Reader → KoReadalong: show playback controls**.
+
 While reading a supported book, hold a word and choose **Read from here** in
 KOReader's highlight dialog to start narration at that word's overlay segment.
 The selection is transient and is not saved as an annotation.

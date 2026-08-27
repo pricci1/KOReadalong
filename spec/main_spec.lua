@@ -5,6 +5,7 @@ describe("KoReadalong lifecycle and menu", function()
     local overlay
     local highlight
     local coordinator
+    local dispatcher
     local playback_dialog
     local ui_manager
     local info_message
@@ -49,7 +50,19 @@ describe("KoReadalong lifecycle and menu", function()
             options = options or {}
             setmetatable(options, self)
             self.__index = self
+            if options.init then
+                options:init()
+            end
             return options
+        end
+
+        dispatcher = {
+            actions = {},
+            register_count = 0,
+        }
+        function dispatcher:registerAction(name, action)
+            self.actions[name] = action
+            self.register_count = self.register_count + 1
         end
 
         overlay = {
@@ -201,6 +214,9 @@ describe("KoReadalong lifecycle and menu", function()
         package.preload["ui/widget/container/widgetcontainer"] = function()
             return widget_container
         end
+        package.preload.dispatcher = function()
+            return dispatcher
+        end
         package.preload["underlineoverlay"] = function()
             return overlay
         end
@@ -282,6 +298,7 @@ describe("KoReadalong lifecycle and menu", function()
             "ui/widget/infomessage",
             "gettext",
             "ui/widget/container/widgetcontainer",
+            "dispatcher",
         } do
             package.preload[module_name] = nil
             package.loaded[module_name] = nil
@@ -290,6 +307,14 @@ describe("KoReadalong lifecycle and menu", function()
 
     it("silently leaves ordinary documents untouched", function()
         overlays_available = false
+        assert.are.equal(1, dispatcher.register_count)
+        assert.are.same({
+            category = "none",
+            event = "ShowReadAlongControls",
+            title = "KoReadalong: show playback controls",
+            reader = true,
+        }, dispatcher.actions.koreadalong_show_controls)
+        assert.is_false(plugin:onShowReadAlongControls())
         plugin:onReaderReady()
         assert.is_nil(plugin.overlay)
         assert.is_nil(registered_menu_widget)
@@ -323,6 +348,11 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal(1, #ui_manager.shown)
         assert.are.equal("playback_dialog", ui_manager.shown[1].kind)
         assert.are.equal(coordinator, ui_manager.shown[1].coordinator)
+
+        ui_manager.shown[1].on_close()
+        assert.is_true(plugin:onShowReadAlongControls())
+        assert.are.equal(2, playback_dialog.new_count)
+        assert.are.equal(2, #ui_manager.shown)
     end)
 
     it("shows the selection action only for usable XPointers and routes its callback", function()
