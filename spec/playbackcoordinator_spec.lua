@@ -611,6 +611,58 @@ describe("playback coordinator", function()
         assert.are.equal(calls_after_one + 1, #resolver.calls)
     end)
 
+    it("reports playback progress and seeks relative to the observed position", function()
+        local coordinator, scheduler, adapter, _, _, overlay =
+            make_fixture(clips_fixture())
+        local idle_status = coordinator:getPlaybackStatus()
+        assert.are.equal("idle", idle_status.state)
+        assert.is_nil(idle_status.position)
+        assert.is_false(idle_status.can_seek)
+
+        coordinator:start()
+        mark_ready(adapter)
+        scheduler:fire_any()
+        adapter.position = 0.4
+        scheduler:fire_any()
+
+        local status = coordinator:getPlaybackStatus()
+        assert.are.equal("playing", status.state)
+        assert.are.equal(0.4, status.position)
+        assert.are.equal(2, status.duration)
+        assert.is_true(status.can_seek)
+
+        local sought, position = coordinator:seekBy(0.5)
+        assert.is_true(sought)
+        assert.are.equal(0.9, position)
+        assert.are.equal(0.9, adapter.seeks[#adapter.seeks])
+        assert.are.equal("pos0-one", overlay.ranges[#overlay.ranges][1])
+
+        sought, position = coordinator:seekBy(15)
+        assert.is_true(sought)
+        assert.are.equal(2, position)
+        assert.are.equal(2, adapter.seeks[#adapter.seeks])
+        assert.is_true(overlay.clears > 0)
+
+        assert.is_true(coordinator:stop())
+        scheduler:fire_any()
+        status = coordinator:getPlaybackStatus()
+        assert.are.equal("idle", status.state)
+        assert.is_nil(status.position)
+        assert.is_nil(status.duration)
+        assert.is_false(status.can_seek)
+    end)
+
+    it("rejects relative seeks until playback is ready", function()
+        local coordinator = make_fixture(clips_fixture())
+        local sought, error_message = coordinator:seekBy(15)
+        assert.is_nil(sought)
+        assert.matches("not ready", error_message)
+
+        sought, error_message = coordinator:seekBy(0 / 0)
+        assert.is_nil(sought)
+        assert.matches("finite number", error_message)
+    end)
+
     it("preserves the range across pause and resumes polling only after success", function()
         local coordinator, scheduler, adapter, _, _, overlay =
             make_fixture(clips_fixture())

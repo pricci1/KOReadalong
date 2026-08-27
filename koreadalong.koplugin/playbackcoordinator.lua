@@ -95,6 +95,8 @@ function PlaybackCoordinator.new(options)
         current_clip_index = nil,
         current_audio_path = nil,
         materialized_path = nil,
+        playback_position = nil,
+        playback_duration = nil,
         range_cache = {},
         poll_scheduled = false,
         scheduled_generation = nil,
@@ -135,6 +137,15 @@ function PlaybackCoordinator:getState()
     return self.state
 end
 
+function PlaybackCoordinator:getPlaybackStatus()
+    return {
+        state = self.state,
+        position = self.playback_position,
+        duration = self.playback_duration,
+        can_seek = self:isSeekEnabled(),
+    }
+end
+
 function PlaybackCoordinator:getActionLabel()
     if self.state == PlaybackCoordinator.STATES.PLAYING then
         return "Pause"
@@ -167,6 +178,37 @@ function PlaybackCoordinator:isStopEnabled()
         and self.state ~= PlaybackCoordinator.STATES.STOPPING
         and self.state ~= PlaybackCoordinator.STATES.IDLE
         and self.state ~= PlaybackCoordinator.STATES.ENDED
+end
+
+function PlaybackCoordinator:isSeekEnabled()
+    return not self.closed
+        and (self.state == PlaybackCoordinator.STATES.PLAYING
+            or self.state == PlaybackCoordinator.STATES.PAUSED)
+        and type(self.playback_position) == "number"
+        and type(self.playback_duration) == "number"
+        and self.playback_duration > 0
+end
+
+function PlaybackCoordinator:seekBy(seconds)
+    if type(seconds) ~= "number" or seconds ~= seconds
+        or seconds == math.huge or seconds == -math.huge then
+        return nil, "seek offset must be a finite number"
+    end
+    if not self:isSeekEnabled() then
+        return nil, "read-along is not ready to seek"
+    end
+
+    local position = math.max(0, math.min(
+        self.playback_duration,
+        self.playback_position + seconds
+    ))
+    local sought, seek_error = invoke(self.adapter, "seek", position)
+    if not sought then
+        return self:_fail(seek_error or "unable to seek audio")
+    end
+    self.playback_position = position
+    self:_update_overlay(self.current_audio_path, position)
+    return true, position
 end
 
 function PlaybackCoordinator:_schedule_poll()
@@ -210,6 +252,8 @@ function PlaybackCoordinator:_remove_materialized_audio()
     end
     self.materialized_path = nil
     self.current_audio_path = nil
+    self.playback_position = nil
+    self.playback_duration = nil
     return true
 end
 
@@ -386,6 +430,8 @@ function PlaybackCoordinator:_prepare_resource(index)
     end
     self.current_clip_index = index
     self.current_audio_path = clip.audio_path
+    self.playback_position = nil
+    self.playback_duration = nil
     self.state = PlaybackCoordinator.STATES.LOADING
 
     local local_path, materialize_error = invoke(
@@ -422,6 +468,7 @@ function PlaybackCoordinator:_prepare_same_resource(index, range)
     if not seek_ok then
         return self:_fail(seek_error or "unable to seek audio")
     end
+    self.playback_position = clip.clip_begin
     local play_ok, play_error = invoke(self.adapter, "play")
     if not play_ok then
         return self:_fail(play_error or "unable to resume audio")
@@ -533,6 +580,10 @@ function PlaybackCoordinator:_finish_load(status)
         return true
     end
 
+    self.playback_position = type(status.position) == "number"
+        and status.position or 0
+    self.playback_duration = status.duration
+
     local clip = self.clips[self.current_clip_index]
     if clip.clip_begin > 0 then
         local seek_ok, seek_error = invoke(
@@ -543,6 +594,7 @@ function PlaybackCoordinator:_finish_load(status)
         if not seek_ok then
             return self:_fail(seek_error or "unable to seek audio")
         end
+        self.playback_position = clip.clip_begin
     end
     if self.intent == PlaybackCoordinator.STATES.PLAYING then
         local resumed, resume_error = invoke(self.adapter, "play")
@@ -566,6 +618,12 @@ function PlaybackCoordinator:_poll()
     if status.state == "error" then
         self:_fail(status.error or "audio playback failed")
         return
+    end
+    if type(status.position) == "number" then
+        self.playback_position = status.position
+    end
+    if type(status.duration) == "number" and status.duration > 0 then
+        self.playback_duration = status.duration
     end
     if self.state == PlaybackCoordinator.STATES.STOPPING then
         self:_finish_stopping(status)
