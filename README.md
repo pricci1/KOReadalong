@@ -24,14 +24,24 @@ koreader/
         └── …
 ```
 
+## Use
+
 Open an EPUB containing EPUB 3 Media Overlays. Supported books gain a
 **Read along** panel with playback progress, 15-second seek buttons, and
 **Start**, **Pause/Resume**, **Stop**, and **Close** controls. Books without
 media overlays are unaffected and do not show the menu.
 
-The panel can also be assigned to any native KOReader gesture. In **Gesture
-manager**, choose a gesture such as **Long-press on corner → Bottom right**,
-then select **Reader → KoReadalong: show playback controls**.
+### Assign a gesture
+
+The panel can be opened with any gesture supported by KOReader:
+
+1. Open **Gesture manager**.
+2. Choose a gesture, for example **Long-press on corner → Bottom right**.
+3. Select **Reader → KoReadalong: show playback controls**.
+
+The assignment is saved by KOReader. The action remains available in Gesture
+manager for all reader documents, but only opens the panel when the current
+book contains usable Media Overlays.
 
 While reading a supported book, hold a word and choose **Read from here** in
 KOReader's highlight dialog to start narration at that word's overlay segment.
@@ -64,7 +74,7 @@ test, so it is suitable for headless development environments.
 
 `make smoke-integration` generates a synthetic EPUB and exercises the complete
 pinned-KOReader pipeline: package and SMIL parsing, private audio extraction,
-real mpv IPC, timeline lookup, CRe fragment resolution, ephemeral underline,
-EOF handling, and cleanup.
+real mpv IPC, timeline lookup, CRe fragment resolution, the playback panel,
+ephemeral underline, EOF handling, and cleanup.
 
 See [docs/architecture.md](docs/architecture.md) for the MVP boundaries and compatibility findings.
