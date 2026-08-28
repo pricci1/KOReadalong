@@ -207,6 +207,38 @@ describe("KinAMP Kindle audio adapter", function()
         assert.are.equal(0, unchanged.position)
     end)
 
+    it("creates a KinAMP playlist with the default writer", function()
+        local timer = make_timer()
+        local port = make_port{
+            probe_result = {
+                live = true,
+                status = daemon_status("stopped", 0, 0, ""),
+                token = "p0",
+            },
+            refreshes = {
+                {
+                    live = true,
+                    status = daemon_status("stopped", 0, 0, ""),
+                    token = "p1",
+                },
+            },
+        }
+        local audio = KindleAudio.new{
+            timer = timer,
+            clock = function() return timer.now end,
+            port = port,
+            playlist_root = "/tmp",
+        }
+
+        assert.is_true(audio:open(AUDIO_PATH))
+        local batch = assert(batch_with(port, "load"))
+        local playlist_path = batch[1][2]
+        local playlist = assert(io.open(playlist_path, "rb"))
+        assert.are.equal(AUDIO_PATH .. "\n", playlist:read("*a"))
+        assert.is_true(playlist:close())
+        assert.is_true(os.remove(playlist_path))
+    end)
+
     it("requires an already-running daemon and does not launch one", function()
         local audio, _, port, writer = make_audio{
             port = make_port{ live = false },
@@ -472,7 +504,7 @@ describe("KinAMP Kindle audio adapter", function()
         assert.are.equal(initial_seeks + 1, command_count(port, "seek"))
     end)
 
-    it("converges pause in both directions without duplicate toggle commands", function()
+    it("resumes by seeking to the paused second without duplicate commands", function()
         local audio, timer, port = start_ready{
             refreshes = {
                 {
@@ -492,31 +524,34 @@ describe("KinAMP Kindle audio adapter", function()
         assert.are.equal("loading", audio:getStatus().state)
         port:queue{
             live = true,
-            status = daemon_status("paused", 0, 10, AUDIO_PATH),
+            status = daemon_status("paused", 186, 482, AUDIO_PATH),
             token = "a2",
         }
         tick(timer)
         assert.are.equal("paused", audio:getStatus().state)
 
-        local before = command_count(port, "play")
+        local seeks_before = command_count(port, "seek")
+        local plays_before = command_count(port, "play")
         assert.is_true(audio:setPaused(false))
         assert.is_true(audio:setPaused(false))
-        assert.are.equal(before + 1, command_count(port, "play"))
+        assert.are.equal(seeks_before + 1, command_count(port, "seek"))
+        assert.are.equal(plays_before, command_count(port, "play"))
+        assert.are.same({ { "seek", 186 } }, port.commands[#port.commands])
         port:queue{
             live = true,
-            status = daemon_status("playing", 0, 10, AUDIO_PATH),
+            status = daemon_status("playing", 186, 482, AUDIO_PATH),
             token = "a3",
         }
         tick(timer)
         assert.are.equal("playing", audio:getStatus().state)
 
-        before = command_count(port, "pause")
+        local pauses_before = command_count(port, "pause")
         assert.is_true(audio:setPaused(true))
         assert.is_true(audio:setPaused(true))
-        assert.are.equal(before + 1, command_count(port, "pause"))
+        assert.are.equal(pauses_before + 1, command_count(port, "pause"))
         port:queue{
             live = true,
-            status = daemon_status("paused", 0, 10, AUDIO_PATH),
+            status = daemon_status("paused", 186, 482, AUDIO_PATH),
             token = "a4",
         }
         tick(timer)

@@ -87,8 +87,8 @@ local function make_playlist_writer(root)
         end
         local entry = content:sub(1, -2)
         local valid, error_message = valid_path(entry, "KinAMP playlist entry")
-        if not valid or content:find("\n", 1, #content - 1, true)
-            or root:sub(1, 1) ~= "/" or has_control_character(root) then
+        if not valid or root:sub(1, 1) ~= "/"
+            or has_control_character(root) then
             return nil, error_message
                 or "KinAMP playlist content or directory is invalid"
         end
@@ -497,8 +497,18 @@ function KindleAudio:_pause_reconcile(status)
         end
         return true
     end
-    local command = self.desired_paused and "pause" or "play"
-    local sent, error_message = self:_send{{ command }}
+    local command
+    if self.desired_paused then
+        command = { "pause" }
+    elseif status.position ~= nil then
+        -- KinAMP 3.0 can move its synthetic clock backwards when its `play`
+        -- command resumes a paused pipeline. Seeking to the published paused
+        -- second creates a playing pipeline without that clock adjustment.
+        command = { "seek", status.position }
+    else
+        command = { "play" }
+    end
+    local sent, error_message = self:_send{ command }
     if not sent then
         return self:_error(error_message)
     end
