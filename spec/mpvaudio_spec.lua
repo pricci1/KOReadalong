@@ -155,6 +155,14 @@ local function sent_count(transport, command_name)
     return count
 end
 
+local function sent_index(transport, request_id)
+    for index, message in ipairs(transport.sent) do
+        if message.request_id == request_id then
+            return index
+        end
+    end
+end
+
 local function reply(transport, request, error_message)
     transport:push{
         request_id = request.request_id,
@@ -284,19 +292,33 @@ describe("production transport nonblocking IO", function()
 end)
 
 describe("desktop mpv audio adapter", function()
-    it("starts in startup, loads asynchronously, and reconciles observed playback", function()
+    it("starts in startup, opens asynchronously, and reconciles observed playback", function()
         local adapter, timer, process, transport = make_adapter()
         assert.are.equal("startup", adapter:getStatus().state)
-        assert.is_true(adapter:load("/tmp/book/audio.wav"))
+        assert.is_true(adapter:open("/tmp/book/audio.wav", {
+            position = 0.25,
+            paused = false,
+        }))
         assert.is_true(process.started)
         assert.are.equal("loading", adapter:getStatus().state)
+        assert.are.equal(0, sent_count(transport, "seek"))
+        assert.are.equal(0, sent_count(transport, "set_property"))
 
         tick(timer)
         local load_request = sent_request(transport, "loadfile")
         assert.is_not_nil(load_request)
+        assert.are.equal(1, sent_count(transport, "set_property"))
+        assert.are.same({ "set_property", "pause", true },
+            sent_request(transport, "set_property").command)
         reply(transport, load_request)
         transport:push{ event = "file-loaded" }
         tick(timer)
+        assert.are.equal(1, sent_count(transport, "seek"))
+        assert.are.equal(2, sent_count(transport, "set_property"))
+        assert.are.same({ "seek", 0.25, "absolute+exact" },
+            sent_request(transport, "seek").command)
+        assert.are.same({ "set_property", "pause", false },
+            sent_request(transport, "set_property").command)
         push_property(adapter, transport, "duration", 2)
         push_property(adapter, transport, "idle-active", false)
         push_property(adapter, transport, "pause", false)
@@ -304,14 +326,17 @@ describe("desktop mpv audio adapter", function()
         assert.are.equal("playing", adapter:getStatus().state)
         assert.are.equal(2, adapter:getStatus().duration)
 
-        assert.is_true(adapter:pause())
+        assert.is_true(adapter:setPaused(true))
         local pause_request = sent_request(transport, "set_property")
         assert.are.same({ "set_property", "pause", true }, pause_request.command)
+        local pause_count = sent_count(transport, "set_property")
+        assert.is_true(adapter:setPaused(true))
+        assert.are.equal(pause_count, sent_count(transport, "set_property"))
         reply(transport, pause_request)
         tick(timer)
         assert.are.equal("paused", adapter:getStatus().state)
 
-        assert.is_true(adapter:resume())
+        assert.is_true(adapter:setPaused(false))
         local resume_request = sent_request(transport, "set_property")
         assert.are.same({ "set_property", "pause", false }, resume_request.command)
         push_property(adapter, transport, "pause", false)
@@ -322,11 +347,12 @@ describe("desktop mpv audio adapter", function()
         local seek_request = sent_request(transport, "seek")
         assert.are.same({ "seek", 1.25, "absolute+exact" }, seek_request.command)
         assert.is_nil(adapter:seek(-1))
+        assert.is_nil(adapter:seek(math.huge))
     end)
 
     it("does not treat loadfile success as decode success and handles EOF and stop", function()
         local adapter, timer, _, transport = make_adapter()
-        adapter:load("/tmp/book/audio.wav")
+        adapter:open("/tmp/book/audio.wav", { paused = false })
         tick(timer)
         local load_request = sent_request(transport, "loadfile")
         reply(transport, load_request)
@@ -350,20 +376,27 @@ describe("desktop mpv audio adapter", function()
         local stop_request = sent_request(transport, "stop")
         reply(transport, stop_request)
         tick(timer)
+        assert.are.equal("ended", adapter:getStatus().state)
+        transport:push{ event = "end-file", reason = "stop" }
+        tick(timer)
         assert.are.equal("idle", adapter:getStatus().state)
     end)
 
-    it("rejects stop and replacement until the untagged file-loaded boundary is consumed", function()
+    it("stages open options before the connection and rejects active replacement", function()
         local adapter, timer, _, transport = make_adapter()
-        assert.is_true(adapter:load("/tmp/first.wav"))
+        assert.is_true(adapter:open("/tmp/first.wav", {
+            position = 0.5,
+            paused = false,
+        }))
+        -- Both controls update the staged open request before the connection
+        -- and before mpv emits file-loaded.
+        assert.is_true(adapter:setPaused(true))
+        assert.is_true(adapter:seek(1.5))
+        assert.are.equal(0, #transport.sent)
+
         tick(timer)
         local first_load = sent_request(transport, "loadfile")
         assert.is_not_nil(first_load)
-
-        -- The coordinator pauses immediately after load. That optimistic
-        -- state change must not make the unresolved boundary reusable.
-        assert.is_true(adapter:pause())
-        assert.are.equal("paused", adapter:getStatus().state)
         assert.is_true(adapter.awaiting_file_loaded)
         local generation = adapter.generation
         local commands_before_rejection = #transport.sent
@@ -371,9 +404,12 @@ describe("desktop mpv audio adapter", function()
         local stopped, stop_error = adapter:stop()
         assert.is_nil(stopped)
         assert.matches("file%-loaded", stop_error)
-        local replaced, replace_error = adapter:load("/tmp/second.wav")
+        local replaced, replace_error = adapter:open("/tmp/second.wav", {
+            position = 0,
+            paused = false,
+        })
         assert.is_nil(replaced)
-        assert.matches("file%-loaded", replace_error)
+        assert.matches("active", replace_error)
         assert.are.equal(generation, adapter.generation)
         assert.are.equal(commands_before_rejection, #transport.sent)
         assert.are.equal(1, sent_count(transport, "loadfile"))
@@ -386,19 +422,26 @@ describe("desktop mpv audio adapter", function()
         transport:push{ event = "file-loaded" }
         tick(timer)
         assert.is_false(adapter.awaiting_file_loaded)
+        assert.are.same({ "seek", 1.5, "absolute+exact" },
+            sent_request(transport, "seek").command)
+        assert.are.same({ "set_property", "pause", true },
+            sent_request(transport, "set_property").command)
         push_property(adapter, transport, "duration", 2)
         push_property(adapter, transport, "idle-active", false)
         push_property(adapter, transport, "pause", false)
         tick(timer)
+        assert.are.equal("loading", adapter:getStatus().state)
+        push_property(adapter, transport, "pause", true)
+        tick(timer)
         assert.are.equal(generation, adapter.generation)
-        assert.are.equal("playing", adapter:getStatus().state)
+        assert.are.equal("paused", adapter:getStatus().state)
     end)
 
     it("keeps delayed lifecycle messages in a closed session away from a new session", function()
         local first, first_timer, first_process, first_transport = make_adapter()
-        assert.is_true(first:load("/tmp/first.wav"))
+        assert.is_true(first:open("/tmp/first.wav"))
         tick(first_timer)
-        assert.is_true(first:pause())
+        assert.is_true(first:setPaused(true))
         assert.is_true(first:close())
 
         -- A late event/property pair from the closed session has no request
@@ -415,7 +458,7 @@ describe("desktop mpv audio adapter", function()
         assert.are.equal(1, first_transport.close_count)
 
         local second, second_timer, _, second_transport = make_adapter()
-        assert.is_true(second:load("/tmp/second.wav"))
+        assert.is_true(second:open("/tmp/second.wav"))
         tick(second_timer)
         assert.are.equal("loading", second:getStatus().state)
         assert.is_nil(second:getStatus().duration)
@@ -432,9 +475,9 @@ describe("desktop mpv audio adapter", function()
         assert.are.equal(3, second:getStatus().duration)
     end)
 
-    it("allows stop acknowledgement and replacement after file-loaded", function()
+    it("allows stop acknowledgement and a new open after idle", function()
         local adapter, timer, _, transport = make_adapter()
-        assert.is_true(adapter:load("/tmp/first.wav"))
+        assert.is_true(adapter:open("/tmp/first.wav"))
         tick(timer)
         local first_load = sent_request(transport, "loadfile")
         reply(transport, first_load)
@@ -448,17 +491,20 @@ describe("desktop mpv audio adapter", function()
         transport:push{ event = "end-file", reason = "stop" }
         tick(timer)
         assert.are.equal("idle", adapter:getStatus().state)
+        transport:push{ event = "end-file", reason = "eof" }
+        tick(timer)
+        assert.are.equal("idle", adapter:getStatus().state)
 
-        assert.is_true(adapter:load("/tmp/second.wav"))
+        assert.is_true(adapter:open("/tmp/second.wav"))
         local second_load = sent_request(transport, "loadfile")
         assert.is_not_nil(second_load)
         assert.are_not.equal(first_load.request_id, second_load.request_id)
         assert.are.equal(2, adapter.generation)
     end)
 
-    it("uses production observer ids and orders replacement around file-loaded", function()
+    it("uses production observer ids and orders a new open around file-loaded", function()
         local adapter, timer, _, transport = make_adapter()
-        adapter:load("/tmp/first.wav")
+        adapter:open("/tmp/first.wav")
         tick(timer)
         local first_request = sent_request(transport, "loadfile")
         reply(transport, first_request)
@@ -471,10 +517,19 @@ describe("desktop mpv audio adapter", function()
         tick(timer)
         assert.are.equal("playing", adapter:getStatus().state)
 
-        assert.is_true(adapter:load("/tmp/second.wav"))
+        assert.is_true(adapter:stop())
+        local stop_request = sent_request(transport, "stop")
+        reply(transport, stop_request)
+        transport:push{ event = "end-file", reason = "stop" }
+        tick(timer)
+        assert.are.equal("idle", adapter:getStatus().state)
+
+        assert.is_true(adapter:open("/tmp/second.wav"))
         local second_request = sent_request(transport, "loadfile")
         assert.are_not.equal(first_request.request_id, second_request.request_id)
-        assert.are.equal("unobserve_property", transport.sent[#transport.sent - 1].command[1])
+        local second_load_index = sent_index(transport, second_request.request_id)
+        assert.are.equal("unobserve_property",
+            transport.sent[second_load_index - 1].command[1])
 
         reply(transport, second_request)
         transport:push{ event = "end-file", reason = "stop" }
@@ -501,7 +556,7 @@ describe("desktop mpv audio adapter", function()
     it("keeps the first terminal error across same-batch messages and timer orders", function()
         local function run_order(teardown_first)
             local adapter, timer, process, transport = make_adapter()
-            adapter:load("/tmp/audio.wav")
+            adapter:open("/tmp/audio.wav")
             tick(timer)
             local load_request = sent_request(transport, "loadfile")
             reply(transport, load_request)
@@ -541,7 +596,7 @@ describe("desktop mpv audio adapter", function()
 
     it("makes close idempotent, unschedules polling, and rejects later commands", function()
         local adapter, timer, process, transport = make_adapter()
-        adapter:load("/tmp/audio.wav")
+        adapter:open("/tmp/audio.wav")
         tick(timer)
         assert.is_true(adapter:close())
         assert.is_true(adapter:close())
@@ -549,11 +604,10 @@ describe("desktop mpv audio adapter", function()
         assert.are.equal(1, process.begin_close_count)
         assert.are.equal(1, timer.unschedule_count)
         assert.are.equal(0, transport.close_count)
-        assert.is_nil(adapter:play())
-        assert.is_nil(adapter:pause())
+        assert.is_nil(adapter:setPaused(true))
         assert.is_nil(adapter:seek(0))
         assert.is_nil(adapter:stop())
-        assert.is_nil(adapter:load("/tmp/later.wav"))
+        assert.is_nil(adapter:open("/tmp/later.wav"))
         timer:advance(0.05)
         assert.are.equal(1, process.cleanup_count)
         assert.are.equal(1, transport.close_count)
@@ -561,7 +615,7 @@ describe("desktop mpv audio adapter", function()
 
     it("does not flush a queued load after closing before IPC connects", function()
         local adapter, timer, process, transport = make_adapter()
-        assert.is_true(adapter:load("/tmp/audio.wav"))
+        assert.is_true(adapter:open("/tmp/audio.wav"))
         assert.is_true(adapter:close())
         timer:advance(0.05)
         assert.are.equal("closed", adapter:getStatus().state)

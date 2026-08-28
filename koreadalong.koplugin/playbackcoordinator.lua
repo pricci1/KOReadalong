@@ -104,6 +104,7 @@ function PlaybackCoordinator.new(options)
         closed = false,
         error = nil,
         cleanup_error = nil,
+        cleanup_pending = false,
         transition = nil,
         stop_issued = false,
         poll_interval = options.poll_interval or POLL_INTERVAL,
@@ -125,7 +126,9 @@ function PlaybackCoordinator.new(options)
         if not self.closed and callback_generation == self.generation
             and (self.state == PlaybackCoordinator.STATES.LOADING
                 or self.state == PlaybackCoordinator.STATES.STOPPING
-                or self.state == PlaybackCoordinator.STATES.PLAYING) then
+                or self.state == PlaybackCoordinator.STATES.PLAYING
+                or (self.state == PlaybackCoordinator.STATES.ERROR
+                    and self.cleanup_pending)) then
             self:_schedule_poll()
         end
     end
@@ -147,9 +150,9 @@ function PlaybackCoordinator:getPlaybackStatus()
 end
 
 function PlaybackCoordinator:isActionEnabled()
-    -- MpvAudio's ERROR state is terminal for this document session. Reopening
-    -- the document is the recovery path; do not expose a Start action that
-    -- can only repeat the same failed adapter session.
+    -- An adapter error is terminal for this document session. Reopening the
+    -- document is the recovery path; do not expose a Start action that can
+    -- only repeat the same failed adapter session.
     return not self.closed
         and self.state ~= PlaybackCoordinator.STATES.LOADING
         and self.state ~= PlaybackCoordinator.STATES.STOPPING
@@ -242,6 +245,21 @@ function PlaybackCoordinator:_remove_materialized_audio()
     return true
 end
 
+function PlaybackCoordinator:_cleanup_after_idle()
+    local status, status_error = invoke(self.adapter, "getStatus")
+    if type(status) ~= "table" then
+        return nil, status_error or "unable to read audio status for cleanup"
+    end
+    if status.state ~= "idle" then
+        return false
+    end
+    local removed, remove_error = self:_remove_materialized_audio()
+    if not removed then
+        return nil, remove_error
+    end
+    return true
+end
+
 function PlaybackCoordinator:_report_error(error_message)
     self.error = tostring(error_message or "unknown read-along error")
     if type(self.on_error) == "function" then
@@ -257,16 +275,19 @@ function PlaybackCoordinator:_fail(error_message, skip_stop)
     self:_unschedule_poll()
     self.intent = nil
     self.transition = nil
+    self.cleanup_pending = false
     if self.materialized_path or self.current_audio_path then
         if not skip_stop and not self.stop_issued then
             self.stop_issued = true
             invoke_optional(self.adapter, "stop")
         end
-        local removed, remove_error = self:_remove_materialized_audio()
-        if not removed then
+        local removed, remove_error = self:_cleanup_after_idle()
+        if removed == nil then
             error_message = tostring(error_message or "read-along error")
                 .. "; cleanup failed: " .. tostring(remove_error)
             self.cleanup_error = remove_error
+        elseif not removed then
+            self.cleanup_pending = true
         end
     else
         self:_clear_overlay()
@@ -274,6 +295,9 @@ function PlaybackCoordinator:_fail(error_message, skip_stop)
     self.stop_issued = false
     self.state = PlaybackCoordinator.STATES.ERROR
     self:_report_error(error_message)
+    if self.cleanup_pending then
+        self:_schedule_poll()
+    end
     return nil, self.error
 end
 
@@ -430,13 +454,17 @@ function PlaybackCoordinator:_prepare_resource(index)
     end
     self.materialized_path = local_path
 
-    local loaded, load_error = invoke(self.adapter, "load", local_path)
-    if not loaded then
-        return self:_fail(load_error or "unable to load audio")
-    end
-    local paused, pause_error = invoke(self.adapter, "pause")
-    if not paused then
-        return self:_fail(pause_error or "unable to pause newly loaded audio")
+    local opened, open_error = invoke(
+        self.adapter,
+        "open",
+        local_path,
+        {
+            position = clip.clip_begin,
+            paused = self.intent == PlaybackCoordinator.STATES.PAUSED,
+        }
+    )
+    if not opened then
+        return self:_fail(open_error or "unable to open audio")
     end
     self:_schedule_poll()
     return true
@@ -454,7 +482,11 @@ function PlaybackCoordinator:_prepare_same_resource(index, range)
         return self:_fail(seek_error or "unable to seek audio")
     end
     self.playback_position = clip.clip_begin
-    local play_ok, play_error = invoke(self.adapter, "play")
+    local play_ok, play_error = invoke(
+        self.adapter,
+        "setPaused",
+        false
+    )
     if not play_ok then
         return self:_fail(play_error or "unable to resume audio")
     end
@@ -554,42 +586,21 @@ function PlaybackCoordinator:_finish_load(status)
         or status.state == "ended" then
         return self:_fail(status.error or "audio ended before it became ready")
     end
-    if status.state == "loading" or status.state == "startup" then
+    if status.state ~= "playing" and status.state ~= "paused" then
         return true
     end
     if type(status.duration) ~= "number"
         or status.duration ~= status.duration
         or status.duration == math.huge
-        or status.duration <= 0
-        or status.paused ~= true then
+        or status.duration <= 0 then
         return true
     end
 
-    self.playback_position = type(status.position) == "number"
-        and status.position or 0
-    self.playback_duration = status.duration
-
     local clip = self.clips[self.current_clip_index]
-    if clip.clip_begin > 0 then
-        local seek_ok, seek_error = invoke(
-            self.adapter,
-            "seek",
-            clip.clip_begin
-        )
-        if not seek_ok then
-            return self:_fail(seek_error or "unable to seek audio")
-        end
-        self.playback_position = clip.clip_begin
-    end
-    if self.intent == PlaybackCoordinator.STATES.PLAYING then
-        local resumed, resume_error = invoke(self.adapter, "play")
-        if not resumed then
-            return self:_fail(resume_error or "unable to start audio")
-        end
-        self.state = PlaybackCoordinator.STATES.PLAYING
-    else
-        self.state = PlaybackCoordinator.STATES.PAUSED
-    end
+    self.playback_position = clip.clip_begin
+    self.playback_duration = status.duration
+    self.state = status.state
+    self.intent = status.state
     self:_update_overlay(self.current_audio_path, clip.clip_begin)
     return true
 end
@@ -598,6 +609,25 @@ function PlaybackCoordinator:_poll()
     local status, status_error = invoke(self.adapter, "getStatus")
     if type(status) ~= "table" then
         self:_fail(status_error or "unable to read audio status")
+        return
+    end
+    if self.state == PlaybackCoordinator.STATES.ERROR then
+        if not self.cleanup_pending then
+            return
+        end
+        if status.state == "idle" then
+            local removed, remove_error = self:_remove_materialized_audio()
+            if removed then
+                self.cleanup_pending = false
+                self:_unschedule_poll()
+            else
+                self.cleanup_pending = false
+                self.cleanup_error = remove_error
+            end
+        elseif status.state == "error" or status.state == "closed" then
+            self.cleanup_pending = false
+            self:_unschedule_poll()
+        end
         return
     end
     if status.state == "error" then
@@ -663,7 +693,7 @@ function PlaybackCoordinator:pause()
     if self.closed or self.state ~= PlaybackCoordinator.STATES.PLAYING then
         return nil, "read-along is not playing"
     end
-    local paused, pause_error = invoke(self.adapter, "pause")
+    local paused, pause_error = invoke(self.adapter, "setPaused", true)
     if not paused then
         return self:_fail(pause_error or "unable to pause audio")
     end
@@ -677,7 +707,7 @@ function PlaybackCoordinator:resume()
     if self.closed or self.state ~= PlaybackCoordinator.STATES.PAUSED then
         return nil, "read-along is not paused"
     end
-    local resumed, resume_error = invoke(self.adapter, "resume")
+    local resumed, resume_error = invoke(self.adapter, "setPaused", false)
     if not resumed then
         return self:_fail(resume_error or "unable to resume audio")
     end

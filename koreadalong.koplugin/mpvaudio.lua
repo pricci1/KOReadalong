@@ -25,6 +25,14 @@ local OBSERVED_PROPERTIES = {
     "idle-active",
 }
 
+local function finite_nonnegative(value)
+    return type(value) == "number"
+        and value == value
+        and value ~= math.huge
+        and value ~= -math.huge
+        and value >= 0
+end
+
 local function default_timer()
     return require("ui/uimanager")
 end
@@ -57,7 +65,6 @@ function MpvAudio.new(options)
         next_request_id = 0,
         next_observer_id = 0,
         pending_requests = {},
-        queued_commands = {},
         observers_by_id = {},
         active_observer_ids = {},
         status = {
@@ -73,6 +80,13 @@ function MpvAudio.new(options)
         connected = false,
         startup_deadline = nil,
         load_acknowledged = false,
+        pending_open = nil,
+        open_commands_sent = false,
+        observers_sent = false,
+        desired_position = nil,
+        desired_paused = nil,
+        pause_command_sent = nil,
+        stop_requested = false,
     }, MpvAudio)
 
     self.poll_action = function()
@@ -213,28 +227,10 @@ function MpvAudio:_next_request(command, kind, generation, metadata)
     return request_id
 end
 
-function MpvAudio:_queue_or_send(command, kind)
-    if not self.connected then
-        self.queued_commands[#self.queued_commands + 1] = {
-            command = command,
-            kind = kind,
-            generation = self.generation,
-        }
+function MpvAudio:_send_observers()
+    if self.observers_sent then
         return true
     end
-    local request_id, send_error = self:_next_request(
-        command,
-        kind,
-        self.generation
-    )
-    if not request_id then
-        self:_fail(send_error)
-        return nil, send_error
-    end
-    return true
-end
-
-function MpvAudio:_send_observers()
     for _, property in ipairs(OBSERVED_PROPERTIES) do
         self.next_observer_id = self.next_observer_id + 1
         local observer_id = self.next_observer_id
@@ -254,11 +250,12 @@ function MpvAudio:_send_observers()
             return nil
         end
     end
+    self.observers_sent = true
     return true
 end
 
 function MpvAudio:_send_pending_commands()
-    if self.pending_load and next(self.active_observer_ids) then
+    if self.pending_open and next(self.active_observer_ids) then
         local old_observer_ids = self.active_observer_ids
         self.active_observer_ids = {}
         for _, observer_id in pairs(old_observer_ids) do
@@ -274,13 +271,12 @@ function MpvAudio:_send_pending_commands()
         end
     end
 
-    if self.pending_load then
-        local pending_load = self.pending_load
-        self.pending_load = nil
+    if self.pending_open and not self.load_request_id then
+        local pending_open = self.pending_open
         local request_id, send_error = self:_next_request(
-            { "loadfile", pending_load.path, "replace" },
+            { "loadfile", pending_open.path, "replace" },
             "load",
-            pending_load.generation
+            pending_open.generation
         )
         if not request_id then
             self:_fail(send_error)
@@ -288,23 +284,68 @@ function MpvAudio:_send_pending_commands()
         end
         self.load_request_id = request_id
     end
-
-    local queued = self.queued_commands
-    self.queued_commands = {}
-    for _, queued_command in ipairs(queued) do
-        if queued_command.generation == self.generation then
-            local request_id, send_error = self:_next_request(
-                queued_command.command,
-                queued_command.kind,
-                queued_command.generation,
-                queued_command
-            )
-            if not request_id then
-                self:_fail(send_error)
-                return nil
-            end
+    -- Hold the new resource while the exact initial position is applied.
+    -- The requested playing state is sent after file-loaded and seek.
+    if self.pending_open and self.load_request_id
+        and self.pause_command_sent == nil then
+        local paused, pause_error = self:_send_pause_command(true)
+        if not paused then
+            return nil, pause_error
         end
     end
+    return true
+end
+
+function MpvAudio:_send_pause_command(paused)
+    if self.pause_command_sent == paused then
+        return true
+    end
+    local request_id, send_error = self:_next_request(
+        { "set_property", "pause", paused },
+        "pause",
+        self.generation,
+        { paused = paused }
+    )
+    if not request_id then
+        self:_fail(send_error)
+        return nil, send_error
+    end
+    self.pause_command_sent = paused
+    return true
+end
+
+function MpvAudio:_send_seek_command(position)
+    local request_id, send_error = self:_next_request(
+        { "seek", position, "absolute+exact" },
+        "seek",
+        self.generation,
+        { position = position }
+    )
+    if not request_id then
+        self:_fail(send_error)
+        return nil, send_error
+    end
+    return true
+end
+
+function MpvAudio:_send_open_commands()
+    if self.open_commands_sent then
+        return true
+    end
+    if not self.observers_sent or not self.connected
+        or self.awaiting_file_loaded then
+        return true
+    end
+
+    local sought, seek_error = self:_send_seek_command(self.desired_position)
+    if not sought then
+        return nil, seek_error
+    end
+    local paused, pause_error = self:_send_pause_command(self.desired_paused)
+    if not paused then
+        return nil, pause_error
+    end
+    self.open_commands_sent = true
     return true
 end
 
@@ -318,20 +359,56 @@ end
 
 function MpvAudio:_reconcile()
     if self.state == MpvAudio.STATES.ERROR
-        or not self.load_acknowledged then
+        or self.state == MpvAudio.STATES.CLOSED then
         return
     end
-    if self.status.idle_active == false and self.status.duration then
+    if self.stop_requested then
+        if self.status.idle_active == true then
+            self:_mark_idle()
+        end
+        return
+    end
+    if self.state == MpvAudio.STATES.ENDED then
+        return
+    end
+    if not self.load_acknowledged
+        or self.awaiting_file_loaded
+        or not self.observers_sent then
+        return
+    end
+    if self.status.idle_active == false
+        and finite_nonnegative(self.status.duration)
+        and self.status.duration > 0
+        and type(self.status.paused) == "boolean"
+        and self.status.paused == self.desired_paused then
         if self.status.paused then
             self:_set_state(MpvAudio.STATES.PAUSED)
         else
             self:_set_state(MpvAudio.STATES.PLAYING)
         end
-    elseif self.status.idle_active == true
-        and self.state ~= MpvAudio.STATES.ENDED
-        and self.state ~= MpvAudio.STATES.ERROR then
-        self:_set_state(MpvAudio.STATES.IDLE)
     end
+end
+
+function MpvAudio:_mark_idle()
+    if self.closed or self.state == MpvAudio.STATES.ERROR then
+        return
+    end
+    self.load_acknowledged = false
+    self.load_request_id = nil
+    self.pending_open = nil
+    self.awaiting_file_loaded = false
+    self.open_commands_sent = false
+    self.observers_sent = false
+    self.desired_position = nil
+    self.desired_paused = nil
+    self.pause_command_sent = nil
+    self.stop_requested = false
+    self.status.position = 0
+    self.status.duration = nil
+    self.status.paused = nil
+    self.status.idle_active = true
+    self.status.error = nil
+    self:_set_state(MpvAudio.STATES.IDLE)
 end
 
 function MpvAudio:_on_property_change(message)
@@ -369,8 +446,15 @@ function MpvAudio:_on_event(message)
         self.awaiting_file_loaded = false
         if not self:_send_observers() then
             self:_abort_session()
+            return
+        end
+        if not self:_send_open_commands() then
+            self:_abort_session()
         end
     elseif message.event == "end-file" then
+        if self.state == MpvAudio.STATES.IDLE then
+            return
+        end
         local reason = message.reason or (message.data and message.data.reason)
         if self.awaiting_file_loaded then
             if reason == "error" then
@@ -384,7 +468,7 @@ function MpvAudio:_on_event(message)
             end
             self:_set_state(MpvAudio.STATES.ENDED)
         elseif reason == "stop" or reason == "quit" then
-            self:_set_state(MpvAudio.STATES.IDLE)
+            self:_mark_idle()
         elseif reason == "error" then
             self:_fail("mpv media error")
         end
@@ -410,15 +494,14 @@ function MpvAudio:_on_reply(message)
         self.status.error = nil
         self:_reconcile()
     elseif request.kind == "pause" then
-        self.status.paused = request.paused
+        if request.paused == self.desired_paused then
+            self.status.paused = request.paused
+        end
         self:_reconcile()
-    elseif request.kind == "stop" then
-        self.load_acknowledged = false
-        self.status.position = 0
-        self.status.duration = nil
-        self.status.paused = nil
-        self.status.idle_active = true
-        self:_set_state(MpvAudio.STATES.IDLE)
+    elseif request.kind == "seek" then
+        if request.position == self.desired_position then
+            self.status.position = request.position
+        end
     end
 end
 
@@ -485,26 +568,41 @@ function MpvAudio:_poll()
     end
 end
 
-function MpvAudio:load(local_file_path)
+function MpvAudio:open(local_file_path, options)
     if self.closed then
         return nil, "mpv audio adapter is closed"
-    end
-    if type(local_file_path) ~= "string" or local_file_path == "" then
-        return nil, "audio path must be a non-empty local path"
     end
     if self.abort_started then
         return nil, "mpv audio adapter session has failed"
     end
-    -- mpv 0.35.1 does not attach a request or session id to file-loaded.
-    -- Do not reuse this IPC session until that untagged boundary is consumed.
-    if self.awaiting_file_loaded then
-        return nil, "audio load is still awaiting mpv file-loaded; close the adapter to cancel it"
+    if type(local_file_path) ~= "string" or local_file_path == "" then
+        return nil, "audio path must be a non-empty local path"
     end
-    if self.state == MpvAudio.STATES.LOADING then
-        return nil, "audio replacement is still loading"
+    if options ~= nil and type(options) ~= "table" then
+        return nil, "audio open options must be a table"
     end
+    options = options or {}
+    local position = options.position
+    if position == nil then
+        position = 0
+    end
+    if not finite_nonnegative(position) then
+        return nil, "open position must be a finite non-negative number"
+    end
+    local paused = options.paused
+    if paused == nil then
+        paused = false
+    end
+    if type(paused) ~= "boolean" then
+        return nil, "open paused option must be boolean"
+    end
+    if self.state ~= MpvAudio.STATES.STARTUP
+        and self.state ~= MpvAudio.STATES.IDLE then
+        return nil, "audio resource is still active"
+    end
+
     self.generation = self.generation + 1
-    self.status.position = 0
+    self.status.position = position
     self.status.duration = nil
     self.status.paused = nil
     self.status.idle_active = nil
@@ -512,78 +610,56 @@ function MpvAudio:load(local_file_path)
     self.load_acknowledged = false
     self.awaiting_file_loaded = true
     self.load_request_id = nil
-    self:_set_state(MpvAudio.STATES.LOADING)
-
-    local retained_commands = {}
-    for _, queued_command in ipairs(self.queued_commands) do
-        if queued_command.generation == self.generation then
-            retained_commands[#retained_commands + 1] = queued_command
-        end
-    end
-    self.queued_commands = retained_commands
-    self.pending_load = {
+    self.pending_open = {
         path = local_file_path,
         generation = self.generation,
+        position = position,
+        paused = paused,
     }
+    self.open_commands_sent = false
+    self.observers_sent = false
+    self.desired_position = position
+    self.desired_paused = paused
+    self.pause_command_sent = nil
+    self.stop_requested = false
+    self:_set_state(MpvAudio.STATES.LOADING)
+
     if not self:_new_process() then
         return nil, self.status.error
     end
     self:_schedule_poll()
     if self.connected then
-        self:_send_pending_commands()
+        local sent, send_error = self:_send_pending_commands()
+        if not sent then
+            return nil, send_error or self.status.error
+        end
     end
     return true
 end
 
-function MpvAudio:play()
+function MpvAudio:setPaused(paused)
     if self.closed then
         return nil, "mpv audio adapter is closed"
     end
     if self.abort_started then
         return nil, "mpv audio adapter session has failed"
     end
-    local ok, error_message = self:_queue_or_send(
-        { "set_property", "pause", false },
-        "play"
-    )
-    if not ok then
-        return nil, error_message
+    if type(paused) ~= "boolean" then
+        return nil, "paused state must be boolean"
     end
-    return true
-end
-
-MpvAudio.resume = MpvAudio.play
-
-function MpvAudio:pause()
-    if self.closed then
-        return nil, "mpv audio adapter is closed"
+    if self.state == MpvAudio.STATES.STARTUP
+        or self.state == MpvAudio.STATES.IDLE then
+        return nil, "audio resource is not open"
     end
-    if self.abort_started then
-        return nil, "mpv audio adapter session has failed"
+    if self.stop_requested then
+        return nil, "audio is stopping"
     end
-    if not self.connected then
-        self.queued_commands[#self.queued_commands + 1] = {
-            command = { "set_property", "pause", true },
-            kind = "pause",
-            paused = true,
-            generation = self.generation,
-        }
+    self.desired_paused = paused
+    if not self.connected or self.awaiting_file_loaded
+        or not self.observers_sent then
         return true
     end
-    local request_id, error_message
-    request_id, error_message = self:_next_request(
-        { "set_property", "pause", true },
-        "pause",
-        self.generation,
-        { paused = true }
-    )
-    if not request_id then
-        self:_fail(error_message)
-        return nil, error_message
-    end
-    self.status.paused = true
-    self:_set_state(MpvAudio.STATES.PAUSED)
-    return true
+    return self:_send_pause_command(paused)
 end
 
 function MpvAudio:seek(seconds)
@@ -593,17 +669,22 @@ function MpvAudio:seek(seconds)
     if self.abort_started then
         return nil, "mpv audio adapter session has failed"
     end
-    if type(seconds) ~= "number" or seconds ~= seconds or seconds < 0 then
-        return nil, "seek position must be a non-negative number"
+    if not finite_nonnegative(seconds) then
+        return nil, "seek position must be a finite non-negative number"
     end
-    local ok, error_message = self:_queue_or_send(
-        { "seek", seconds, "absolute+exact" },
-        "seek"
-    )
-    if not ok then
-        return nil, error_message
+    if self.state == MpvAudio.STATES.STARTUP
+        or self.state == MpvAudio.STATES.IDLE then
+        return nil, "audio resource is not open"
     end
-    return true
+    if self.stop_requested then
+        return nil, "audio is stopping"
+    end
+    self.desired_position = seconds
+    if not self.connected or self.awaiting_file_loaded
+        or not self.observers_sent then
+        return true
+    end
+    return self:_send_seek_command(seconds)
 end
 
 function MpvAudio:stop()
@@ -613,13 +694,25 @@ function MpvAudio:stop()
     if self.abort_started then
         return nil, "mpv audio adapter session has failed"
     end
-    -- A stop reply does not cancel a load that mpv may still complete, and
-    -- the later file-loaded event cannot be correlated to this request.
+    if self.state == MpvAudio.STATES.STARTUP
+        or self.state == MpvAudio.STATES.IDLE then
+        return true
+    end
+    -- mpv 0.35.1 does not attach a request or session id to file-loaded.
+    -- Do not reuse this IPC session until that untagged boundary is consumed.
     if self.awaiting_file_loaded then
         return nil, "cannot stop before mpv file-loaded; close the adapter to cancel it"
     end
-    local ok, error_message = self:_queue_or_send({ "stop" }, "stop")
-    if not ok then
+    if self.stop_requested then
+        return true
+    end
+    self.stop_requested = true
+    local request_id, error_message = self:_next_request(
+        { "stop" },
+        "stop",
+        self.generation
+    )
+    if not request_id then
         return nil, error_message
     end
     return true
@@ -666,8 +759,13 @@ function MpvAudio:close()
     self.closed = true
     self:_set_state(MpvAudio.STATES.CLOSED)
     self.awaiting_file_loaded = false
-    self.pending_load = nil
-    self.queued_commands = {}
+    self.pending_open = nil
+    self.open_commands_sent = false
+    self.observers_sent = false
+    self.desired_position = nil
+    self.desired_paused = nil
+    self.pause_command_sent = nil
+    self.stop_requested = false
     if self.poll_scheduled then
         self.timer:unschedule(self.poll_action)
         self.poll_scheduled = false

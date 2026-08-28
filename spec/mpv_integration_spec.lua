@@ -144,12 +144,18 @@ describe("production mpv desktop audio integration", function()
             extra_args = { "--ao=null" },
         }
         local production_transport = MpvTransport.new()
-        local seek_command_sent = false
+        local seek_target
         local seek_observed = false
+        local pause_true_commands = 0
         local transport_send = production_transport.send
         function production_transport:send(message)
             if message.command[1] == "seek" then
-                seek_command_sent = true
+                seek_target = message.command[2]
+            end
+            if message.command[1] == "set_property"
+                and message.command[2] == "pause"
+                and message.command[3] == true then
+                pause_true_commands = pause_true_commands + 1
             end
             return transport_send(self, message)
         end
@@ -157,7 +163,7 @@ describe("production mpv desktop audio integration", function()
         function production_transport:poll(now)
             local events = transport_poll(self, now)
             for _, event in ipairs(events) do
-                if seek_command_sent and event.kind == "message"
+                if seek_target == 0.2 and event.kind == "message"
                     and event.message.event == "property-change"
                     and event.message.name == "time-pos"
                     and type(event.message.data) == "number"
@@ -174,20 +180,27 @@ describe("production mpv desktop audio integration", function()
             transport = production_transport,
         }
 
-        assert.is_true(audio:load(wav_path))
+        assert.is_true(audio:open(wav_path, {
+            position = 0.35,
+            paused = false,
+        }))
         assert.is_true(wait_for(timer, function()
             return audio:getStatus().state == "playing"
                 or audio:getStatus().state == "error"
         end, 3))
         assert.are_not.equal("error", audio:getStatus().state, audio:getStatus().error)
         assert.is_true(audio:getStatus().duration > 0.7)
+        assert.are.equal(0.35, seek_target)
 
         local first_position = audio:getStatus().position or 0
         assert.is_true(wait_for(timer, function()
             return (audio:getStatus().position or 0) > first_position + 0.08
         end, 0.8))
 
-        assert.is_true(audio:pause())
+        local pause_true_before = pause_true_commands
+        assert.is_true(audio:setPaused(true))
+        assert.is_true(audio:setPaused(true))
+        assert.are.equal(pause_true_before + 1, pause_true_commands)
         assert.is_true(wait_for(timer, function()
             return audio:getStatus().state == "paused"
         end, 0.8))
@@ -205,7 +218,7 @@ describe("production mpv desktop audio integration", function()
             return seek_observed
         end, 0.8))
 
-        assert.is_true(audio:resume())
+        assert.is_true(audio:setPaused(false))
         assert.is_true(wait_for(timer, function()
             return audio:getStatus().state == "playing"
         end, 0.8))
@@ -215,14 +228,25 @@ describe("production mpv desktop audio integration", function()
             return audio:getStatus().state == "idle"
         end, 0.8))
 
-        assert.is_true(audio:load(wav_path))
+        assert.is_true(audio:open(wav_path, {
+            position = 0,
+            paused = false,
+        }))
         assert.is_true(wait_for(timer, function()
             return audio:getStatus().state == "ended"
                 or audio:getStatus().state == "error"
         end, 3))
         assert.are.equal("ended", audio:getStatus().state, audio:getStatus().error)
 
-        assert.is_true(audio:load(invalid_path))
+        assert.is_true(audio:stop())
+        assert.is_true(wait_for(timer, function()
+            return audio:getStatus().state == "idle"
+        end, 0.8))
+
+        assert.is_true(audio:open(invalid_path, {
+            position = 0,
+            paused = false,
+        }))
         assert.is_true(wait_for(timer, function()
             return audio:getStatus().state == "error"
         end, 1.5))
