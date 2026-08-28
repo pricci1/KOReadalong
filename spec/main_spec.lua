@@ -13,6 +13,10 @@ describe("KoReadalong lifecycle and menu", function()
     local overlays_available
     local goto_events
     local range_visible
+    local is_kindle
+    local adapter_module_loads
+    local mpv_adapter
+    local kindle_adapter
 
     local clips = {
         {
@@ -28,12 +32,14 @@ describe("KoReadalong lifecycle and menu", function()
     before_each(function()
         for _, module_name in ipairs{
             "main",
+            "device",
             "mediaoverlays",
             "timeline",
             "fragmentresolver",
             "underlineoverlay",
             "materializer",
             "mpvaudio",
+            "kindleaudio",
             "playbackcoordinator",
             "playbackdialog",
         } do
@@ -103,6 +109,13 @@ describe("KoReadalong lifecycle and menu", function()
         registered_menu_widget = nil
         goto_events = {}
         range_visible = true
+        is_kindle = false
+        adapter_module_loads = {
+            mpv = 0,
+            kindle = 0,
+        }
+        mpv_adapter = {}
+        kindle_adapter = {}
         function overlay.new(options)
             overlay.new_count = overlay.new_count + 1
             overlay.options = options
@@ -217,6 +230,13 @@ describe("KoReadalong lifecycle and menu", function()
         package.preload.dispatcher = function()
             return dispatcher
         end
+        package.preload.device = function()
+            return {
+                isKindle = function()
+                    return is_kindle
+                end,
+            }
+        end
         package.preload["underlineoverlay"] = function()
             return overlay
         end
@@ -227,7 +247,20 @@ describe("KoReadalong lifecycle and menu", function()
             return playback_dialog
         end
         package.preload["mpvaudio"] = function()
-            return { new = function() return {} end }
+            adapter_module_loads.mpv = adapter_module_loads.mpv + 1
+            return {
+                new = function()
+                    return mpv_adapter
+                end,
+            }
+        end
+        package.preload["kindleaudio"] = function()
+            adapter_module_loads.kindle = adapter_module_loads.kindle + 1
+            return {
+                new = function()
+                    return kindle_adapter
+                end,
+            }
         end
         package.preload["materializer"] = function()
             return { new = function() return {} end }
@@ -285,12 +318,14 @@ describe("KoReadalong lifecycle and menu", function()
     after_each(function()
         for _, module_name in ipairs{
             "main",
+            "device",
             "mediaoverlays",
             "timeline",
             "fragmentresolver",
             "underlineoverlay",
             "materializer",
             "mpvaudio",
+            "kindleaudio",
             "playbackcoordinator",
             "playbackdialog",
             "ui/uimanager",
@@ -303,6 +338,33 @@ describe("KoReadalong lifecycle and menu", function()
             package.preload[module_name] = nil
             package.loaded[module_name] = nil
         end
+    end)
+
+    it("lazily selects mpv on non-Kindle devices", function()
+        assert.is_nil(package.loaded["mpvaudio"])
+        assert.is_nil(package.loaded["kindleaudio"])
+
+        plugin:onReaderReady()
+
+        assert.are.equal(1, adapter_module_loads.mpv)
+        assert.are.equal(0, adapter_module_loads.kindle)
+        assert.is_not_nil(package.loaded["mpvaudio"])
+        assert.is_nil(package.loaded["kindleaudio"])
+        assert.are.equal(mpv_adapter, coordinator.options.adapter)
+    end)
+
+    it("lazily selects Kindle audio on Kindle devices", function()
+        is_kindle = true
+        assert.is_nil(package.loaded["mpvaudio"])
+        assert.is_nil(package.loaded["kindleaudio"])
+
+        plugin:onReaderReady()
+
+        assert.are.equal(0, adapter_module_loads.mpv)
+        assert.are.equal(1, adapter_module_loads.kindle)
+        assert.is_nil(package.loaded["mpvaudio"])
+        assert.is_not_nil(package.loaded["kindleaudio"])
+        assert.are.equal(kindle_adapter, coordinator.options.adapter)
     end)
 
     it("silently leaves ordinary documents untouched", function()

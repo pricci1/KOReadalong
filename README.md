@@ -2,7 +2,9 @@
 
 KoReadalong is a [KOReader](https://github.com/koreader/koreader) plugin for reading EPUB 3 books alongside their embedded audio. The Linux desktop MVP plays EPUB Media Overlays and underlines the sentence or paragraph currently being narrated.
 
-The current implementation targets KOReader's Linux desktop build. A jailbroken Kindle with Bluetooth audio is the planned hardware target, but Kindle playback is not implemented yet.
+The current implementation targets KOReader's Linux desktop build. Experimental
+Kindle playback is available through KinAMP with degraded timing; physical
+Kindle and Bluetooth validation remains pending.
 
 ## Install on Linux
 
@@ -23,6 +25,30 @@ koreader/
         ├── main.lua
         └── …
 ```
+
+## Experimental Kindle/KinAMP support
+
+Kindle playback is experimental and degraded. It requires:
+
+1. A jailbroken Kindle running KOReader.
+2. KinAMP installed separately according to
+   [kbarni/KinAMP](https://github.com/kbarni/KinAMP).
+3. The KoReadalong plugin installed in KOReader, followed by a KOReader
+   restart.
+4. KinAMP manually started through its own installation/plugin, with its
+   daemon left idle/stopped before using KoReadalong.
+
+KinAMP's command FIFO and status file live under
+`${KINAMP_RUNTIME_DIR:-/tmp}`. KoReadalong does not launch, kill, or quit
+KinAMP. A missing or busy KinAMP daemon produces a clear playback error.
+Observed timing is in whole seconds, and seeks are rounded to the nearest
+second. Concurrent KinAMP clients are not supported. KinAMP's protocol cannot
+distinguish an external stop from natural EOF, so those outcomes are
+indistinguishable to KoReadalong. Physical Kindle/Bluetooth validation remains
+pending.
+
+KinAMP is a separate GPLv3+ dependency from kbarni/KinAMP; no KinAMP source is
+bundled or copied into KoReadalong.
 
 ## Use
 
@@ -49,8 +75,10 @@ The selection is transient and is not saved as an annotation.
 
 The current MVP supports ordinary Storyteller-style SMIL targets using XHTML
 element IDs and follows narration onto the page containing the active target.
-Web Text Fragment targets, complex DOM ranges, and Kindle audio are not yet
-supported. Underlines are ephemeral and never create KOReader annotations.
+Web Text Fragment targets and complex DOM ranges are not yet supported.
+Kindle playback is available only through the experimental/degraded KinAMP
+path described above. Underlines are ephemeral and never create KOReader
+annotations.
 
 ## Development
 

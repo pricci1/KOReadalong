@@ -1,9 +1,9 @@
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
+local Device = require("device")
 local Dispatcher = require("dispatcher")
 local FragmentResolver = require("fragmentresolver")
 local Materializer = require("materializer")
 local MediaOverlays = require("mediaoverlays")
-local MpvAudio = require("mpvaudio")
 local PlaybackCoordinator = require("playbackcoordinator")
 local PlaybackDialog = require("playbackdialog")
 local Timeline = require("timeline")
@@ -64,6 +64,13 @@ local function close_highlight(highlight)
     elseif type(highlight.clear) == "function" then
         highlight:clear()
     end
+end
+
+local function new_audio_adapter()
+    if Device:isKindle() then
+        return require("kindleaudio").new{ timer = UIManager }
+    end
+    return require("mpvaudio").new{ timer = UIManager }
 end
 
 function KoReadalong:_show_error(error_message)
@@ -195,7 +202,7 @@ function KoReadalong:onReaderReady()
     self.overlay:register()
 
     self.coordinator = PlaybackCoordinator.new{
-        adapter = MpvAudio.new{ timer = UIManager },
+        adapter = new_audio_adapter(),
         scheduler = UIManager,
         archive_reader = function(path)
             return self:_read_document_file(path)

@@ -99,6 +99,12 @@ with zipfile.ZipFile(os.path.join(root, "synthetic.epub"), "w") as epub:
 PY
 
 mkdir -p "$smoke_root/koreadalongsmoke.koplugin"
+for module in "$repo_root"/koreadalong.koplugin/*.lua; do
+    if [[ "$(basename "$module")" != "main.lua" ]]; then
+        ln -s "$module" \
+            "$smoke_root/koreadalongsmoke.koplugin/$(basename "$module")"
+    fi
+done
 cat > "$smoke_root/koreadalongsmoke.koplugin/main.lua" <<'LUA'
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
 local MediaOverlays = require("mediaoverlays")

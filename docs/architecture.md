@@ -32,7 +32,9 @@ KOReader reader ◀── XPointer/overlay adapter ◀── playback coordinato
 - **Media-overlay parser:** reads OPF/SMIL and returns platform-neutral clips. It must not depend on rendering or playback.
 - **Playback coordinator:** maps audio position to a clip with binary search, updates the active text target, and coordinates chapter/audio transitions.
 - **Reader adapter:** converts EPUB fragment IDs to CRe XPointers, derives current screen boxes, and paints ephemeral underlines. It recomputes boxes on page/position updates and document rerenders.
-- **Audio adapter:** exposes load, play, pause, seek, stop, position, and duration. Desktop and Kindle implementations must share this contract.
+- **Audio adapter:** exposes `open(path, { position = 0, paused = false })`,
+  `setPaused`, `seek`, `stop`, `getStatus`, and `close`. Desktop and Kindle
+  implementations must share this contract.
 
 ## Parser and timeline contract
 
@@ -113,12 +115,17 @@ Dynamic read-along marks should be a registered reader view module with a `paint
 ## Audio adapters
 
 The desktop adapter is `mpvaudio.lua`. It owns one `mpv` process per adapter
-session and exposes the platform-neutral `load`, `play`/`resume`, `pause`,
-`seek`, `stop`, `getStatus`, and idempotent `close` contract. Its states are
-`startup`, `idle`, `loading`, `playing`, `paused`, `ended`, `error`, and
-`closed`. Loading is not considered successful until observed mpv properties
-confirm a decoded, non-idle resource; `end-file`, property changes, process
-exit, and IPC failures reconcile the status.
+session and exposes the platform-neutral `open(path, options)`, `setPaused`,
+`seek`, `stop`, `getStatus`, and idempotent `close` contract. `open` accepts a
+finite non-negative initial position and a boolean paused intent. It is valid
+only while the adapter has no active resource; it does not replace a resource
+that is loading, playing, paused, or ended. Its states are `idle`, `loading`,
+`playing`, `paused`, `ended`, `error`, and `closed` (the desktop implementation
+may expose `startup` before its first open). Opening is accepted before mpv
+has converged: readiness is reported only after observed properties confirm a
+decoded, non-idle resource and the requested paused state. `setPaused` is an
+idempotent set operation rather than a toggle. `end-file`, property changes,
+process exit, and IPC failures reconcile the status.
 
 The process uses the `mpv` package installed by `.agents/setup`, argv-only
 `execvp`, `--no-config`, idle/no-video/no-terminal mode, disabled input
@@ -131,15 +138,17 @@ below `sockaddr_un.sun_path`, and the adapter cleans the socket and directory
 after waitpid reaping. The process has an exec-status pipe, a tracked PID and
 process group, and bounded quit/close, SIGTERM, then SIGKILL teardown.
 
-Each loaded resource gets fresh mpv `observe_property` IDs. Replacement first
-unobserves the old IDs, queues `loadfile ... replace`, and waits for mpv's
-`file-loaded` event before observing the new resource. In pinned mpv 0.35.1,
-the `loadfile` reply only acknowledges command handling and `file-loaded` has
-no request or session id. During that unresolved boundary, old `end-file`
-events are ignored, property changes are accepted only when their real mpv
-observer ID belongs to the current generation, and both `stop` and a second
-`load` are rejected. `close` is the cancellation path and tears down the IPC
-session; the coordinator therefore disables Stop while it is `LOADING`.
+Each opened resource gets fresh mpv `observe_property` IDs. After the
+coordinator has stopped the previous resource and observed `idle`, the adapter
+unobserves the old IDs, sends `loadfile ... replace`, and waits for mpv's
+`file-loaded` event before observing the new resource and issuing the staged
+initial seek and paused-state request. In pinned mpv 0.35.1, the `loadfile`
+reply only acknowledges command handling and `file-loaded` has no request or
+session id. During that unresolved boundary, old `end-file` events are
+ignored, property changes are accepted only when their real mpv observer ID
+belongs to the current generation, and both `stop` and a second `open` are
+rejected. `close` is the cancellation path and tears down the IPC session; the
+coordinator therefore disables Stop while it is `LOADING`.
 
 The adapter receives an already-materialized local audio path. It never opens
 TCP, parses stderr, injects keyboard input, or extracts EPUB resources. The
@@ -154,9 +163,40 @@ panel disables its transport actions and reports that the document must be
 reopened to retry. Resource replacement and final EOF first wait for the
 adapter's idle acknowledgement before removing the private extracted file.
 
-Kindle will implement the same high-level audio contract separately behind its
-own capability-gated daemon/Bluetooth adapter. Desktop mpv behavior is not a
-Kindle dependency.
+The Kindle adapter is `kindleaudio.lua`, backed by the narrow
+`kinampport.lua` seam. `KindleAudio` owns one adapter-created, one-entry M3U,
+reconciles desired pause state and one-shot seek intents against fresh KinAMP
+status publications, and uses the FIFO as a liveness probe rather than
+trusting a stale status file. Before loading, it forces a status publication
+and requires a newly published idle snapshot; stop and close require a fresh
+stopped publication for the exact audio path. Publication identity is carried
+by a KinAMPPort token derived from the atomically replaced status file's inode
+and modification metadata, not by a poll counter.
+KinAMP's whole-second seek protocol is intentionally exposed as degraded
+timing: fractional requests are rounded to the nearest non-negative second,
+and reported positions are observed whole seconds rather than predicted
+fractions. No timing capability interface is exposed in this phase. KinAMP's
+current protocol can make external stop and natural EOF indistinguishable, so
+an owned fresh playing-to-stopped transition with a positive duration is
+treated as EOF even when the final position is stale; the last active observed
+position is retained. A stopped transition from paused playback is terminal
+for the document session.
+
+`kinampport.lua` requires an already-running KinAMP daemon, writes only
+bounded newline-delimited text commands to the nonblocking command FIFO, and
+parses bounded atomically replaced status snapshots. It fails closed when
+FIFO type or publication metadata cannot be verified, uses SIGPIPE-safe
+EINTR/EAGAIN-aware writes, and never sends `quit`, launches or kills a daemon,
+or manages Bluetooth. This initial integration assumes Kindle/Linux
+`PIPE_BUF=4096` atomic writes. KinAMP is an external GPLv3+ dependency;
+protocol interoperability is based on the public KinAMP project at
+<https://github.com/kbarni/KinAMP>, and no KinAMP source is bundled or copied
+into KoReadalong.
+
+`main.lua` now selects the audio adapter with `Device:isKindle()` and lazily
+requires only the selected adapter; device selection remains outside the
+platform-neutral playback coordinator. Physical Kindle/KinAMP validation
+remains pending.
 
 ## Tooling
 
