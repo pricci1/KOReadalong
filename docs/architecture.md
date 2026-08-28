@@ -175,7 +175,11 @@ and modification metadata, not by a poll counter.
 KinAMP's whole-second seek protocol is intentionally exposed as degraded
 timing: fractional requests are rounded to the nearest non-negative second,
 and reported positions are observed whole seconds rather than predicted
-fractions. No timing capability interface is exposed in this phase. KinAMP's
+fractions. KinAMP 3.0.0's `play` command can subtract stale pipeline running
+time when resuming, rewinding the published and audible position. The adapter
+therefore resumes by seeking to the last published paused second; KinAMP's
+seek starts a replacement playing pipeline without the faulty resume clock
+adjustment. No timing capability interface is exposed in this phase. KinAMP's
 current protocol can make external stop and natural EOF indistinguishable, so
 an owned fresh playing-to-stopped transition with a positive duration is
 treated as EOF even when the final position is stale; the last active observed
@@ -195,8 +199,10 @@ into KoReadalong.
 
 `main.lua` now selects the audio adapter with `Device:isKindle()` and lazily
 requires only the selected adapter; device selection remains outside the
-platform-neutral playback coordinator. Physical Kindle/KinAMP validation
-remains pending.
+platform-neutral playback coordinator. Physical validation on a Kindle
+Paperwhite 6 covered Bluetooth playback, synchronized ephemeral highlighting,
+pause/resume, ±15-second seeks, clip handoff, stop/restart, and document-close
+cleanup with KOReader v2026.07.1 and KinAMP 3.0.0.
 
 ## Tooling
 
