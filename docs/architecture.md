@@ -2,7 +2,7 @@
 
 ## MVP outcome
 
-Open a Storyteller-compatible EPUB in KOReader, start or pause its embedded narration, seek with the book/audio controls, and underline the active text target as playback advances. Desktop Linux is the first implementation environment; Kindle playback follows behind the same backend contract.
+Open a Storyteller-compatible EPUB in KOReader, start or pause its embedded narration, seek with the book/audio controls, and underline the active text target as playback advances. Desktop Linux is the first implementation environment; the experimental Kindle adapter uses the same backend contract.
 
 ## Input contract
 
@@ -171,7 +171,9 @@ trusting a stale status file. Before loading, it forces a status publication
 and requires a newly published idle snapshot; stop and close require a fresh
 stopped publication for the exact audio path. Publication identity is carried
 by a KinAMPPort token derived from the atomically replaced status file's inode
-and modification metadata, not by a poll counter.
+and modification metadata, not by a poll counter. A missing or busy daemon is
+reported as a playback error; the adapter does not launch, kill, or quit it.
+
 KinAMP's whole-second seek protocol is intentionally exposed as degraded
 timing: fractional requests are rounded to the nearest non-negative second,
 and reported positions are observed whole seconds rather than predicted
@@ -186,23 +188,23 @@ treated as EOF even when the final position is stale; the last active observed
 position is retained. A stopped transition from paused playback is terminal
 for the document session.
 
-`kinampport.lua` requires an already-running KinAMP daemon, writes only
-bounded newline-delimited text commands to the nonblocking command FIFO, and
-parses bounded atomically replaced status snapshots. It fails closed when
-FIFO type or publication metadata cannot be verified, uses SIGPIPE-safe
-EINTR/EAGAIN-aware writes, and never sends `quit`, launches or kills a daemon,
-or manages Bluetooth. This initial integration assumes Kindle/Linux
-`PIPE_BUF=4096` atomic writes. KinAMP is an external GPLv3+ dependency;
-protocol interoperability is based on the public KinAMP project at
-<https://github.com/kbarni/KinAMP>, and no KinAMP source is bundled or copied
-into KoReadalong.
+`kinampport.lua` resolves the command FIFO `kinamp_cmd` and status file
+`kinamp_status` under `${KINAMP_RUNTIME_DIR:-/tmp}`. It requires an
+already-running KinAMP daemon, writes only bounded newline-delimited text
+commands to the nonblocking command FIFO, and parses bounded atomically
+replaced status snapshots. It fails closed when FIFO type or publication
+metadata cannot be verified, uses SIGPIPE-safe EINTR/EAGAIN-aware writes, and
+never sends `quit`, launches or kills a daemon, or manages Bluetooth. This
+initial integration assumes Kindle/Linux `PIPE_BUF=4096` atomic writes. KinAMP
+is an external GPLv3+ dependency; protocol interoperability is based on the
+public [KinAMP project](https://github.com/kbarni/KinAMP), and no KinAMP source
+is bundled or copied into KoReadalong.
 
-`main.lua` now selects the audio adapter with `Device:isKindle()` and lazily
+`main.lua` selects the audio adapter with `Device:isKindle()` and lazily
 requires only the selected adapter; device selection remains outside the
-platform-neutral playback coordinator. Physical validation on a Kindle
-Paperwhite 6 covered Bluetooth playback, synchronized ephemeral highlighting,
-pause/resume, ±15-second seeks, clip handoff, stop/restart, and document-close
-cleanup with KOReader v2026.07.1 and KinAMP 3.0.0.
+platform-neutral playback coordinator. Operator setup, troubleshooting,
+workarounds, and physical validation are documented in the
+[Kindle/KinAMP section of the README](../README.md).
 
 ## Tooling
 
@@ -213,10 +215,13 @@ cleanup with KOReader v2026.07.1 and KinAMP 3.0.0.
 - Formatting: four-space KOReader style; upstream defines no mandatory formatter.
 - Desktop runtime: checksum-pinned KOReader Linux x86_64 release installed under `.cache/`.
 
-## Delivery sequence
+## Delivery status
 
-1. Parse package metadata, SMIL clocks, nested sequences, and Storyteller fixtures.
-2. Resolve fragment IDs to KOReader text anchors and paint a static ephemeral underline.
-3. Connect the desktop adapter to playback and synchronize the active clip.
-4. Add navigation, playback controls, and representative rerender/page tests. (MVP complete.)
-5. Implement and test the Kindle audio/Bluetooth adapter on supported hardware.
+The current MVP includes package and SMIL parsing, fragment resolution,
+platform-neutral playback, KOReader integration, desktop audio, playback
+controls, and representative rerender/page tests.
+
+The Kindle adapter is implemented and physically validated only on the tested
+configuration documented in the README. It remains experimental with degraded
+timing; this validation does not claim support for other Kindle models or
+firmware.
