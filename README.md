@@ -3,9 +3,8 @@
 KoReadalong is a [KOReader](https://github.com/koreader/koreader) plugin for reading EPUB 3 books alongside their embedded audio. The Linux desktop MVP plays EPUB Media Overlays and underlines the sentence or paragraph currently being narrated.
 
 The current implementation targets KOReader's Linux desktop build. Experimental
-Kindle playback is available through KinAMP with degraded timing. Playback,
-Bluetooth audio, controls, chapter handoff, and cleanup have been validated on
-a Kindle Paperwhite 6 with KOReader v2026.07.1 and KinAMP 3.0.0.
+Kindle playback is available through KinAMP with degraded timing; the tested
+device, versions, and coverage are listed below.
 
 ## Install on Linux
 
@@ -39,7 +38,7 @@ Kindle models or firmware.
 1. Use a jailbroken Kindle running KOReader.
 2. Install KinAMP separately according to
    [kbarni/KinAMP](https://github.com/kbarni/KinAMP). KinAMP is a separate
-   GPLv3+ dependency; KoReadalong bundles or copies no KinAMP source.
+   GPLv3+ dependency; KoReadalong does not bundle or copy KinAMP source.
 3. Install `koreadalong.koplugin` in KOReader and restart KOReader.
 4. Open the EPUB in KOReader **before** starting KinAMP.
 5. From KinAMP's own installation/plugin, start the idle daemon:
@@ -67,7 +66,7 @@ handoff, stop/restart, and document-close cleanup.
 
 | Symptom | Check | Remedy |
 | --- | --- | --- |
-| KinAMP's launcher reports `libfaad.so.2 => not found` | From the KinAMP directory, run `LD_LIBRARY_PATH=libs_hf ldd ./KinAMP-minimal`. Also check for `KinAMP/libs_hf` and `KinAMP/libs_pw2`. | The KinAMP 3.0.0 `kinamp.zip` tested on August 28, 2026 omitted both library directories required by its launchers. On an armhf Kindle, copy `KinAMP/libs_hf` from the 3.0 beta archive for this diagnostic result. Preserve the newer 3.0.0 binaries and launchers. |
+| KinAMP's launcher reports `libfaad.so.2 => not found` | From the KinAMP directory, run `LD_LIBRARY_PATH=libs_hf ldd ./KinAMP-minimal`. Check the extracted package for `KinAMP/libs_hf` and `KinAMP/libs_pw2`. | The KinAMP 3.0.0 `kinamp.zip` tested on August 28, 2026 omitted both library directories required by its launchers. On an armhf Kindle, copy `KinAMP/libs_hf` from the 3.0 beta archive when this diagnostic reports the missing library. Preserve the newer 3.0.0 binaries and launchers. |
 | Read along reports that KinAMP is not running | Check that the daemon is running and that `kinamp_cmd` and `kinamp_status` exist under `${KINAMP_RUNTIME_DIR:-/tmp}`. | Start KinAMP manually with `startkinamp_koreader.sh --idle`, then retry. KoReadalong never starts, kills, or quits the daemon. |
 | Read along reports that KinAMP is busy | Check whether KinAMP is already playing or paused, or whether another client is using it. | Stop the other playback, leave the daemon idle/stopped, and retry. Concurrent KinAMP clients are not supported. |
 | KinAMP disappears after changing between the file manager and reader | The tested Zen UI configuration can quit an idle KinAMP daemon during that switch. | Open the EPUB first, start `startkinamp_koreader.sh --idle`, and keep the document open while using Read along. |
