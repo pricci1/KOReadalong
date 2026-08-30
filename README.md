@@ -29,48 +29,70 @@ koreader/
 
 ## Experimental Kindle/KinAMP support
 
-Kindle playback is experimental and degraded. It requires:
+Kindle playback is experimental and degraded. The procedure and findings below
+apply to the one physical configuration listed in [Tested
+configuration](#tested-configuration); they are not a support claim for other
+Kindle models or firmware.
 
-1. A jailbroken Kindle running KOReader.
-2. KinAMP installed separately according to
-   [kbarni/KinAMP](https://github.com/kbarni/KinAMP).
-3. The KoReadalong plugin installed in KOReader, followed by a KOReader
-   restart.
-4. KinAMP manually started through its own installation/plugin, with its
-   daemon left idle/stopped before using KoReadalong.
+### Setup
 
-The KinAMP 3.0.0 `kinamp.zip` tested on August 28, 2026 omitted the
-`KinAMP/libs_hf` and `KinAMP/libs_pw2` directories required by its launchers.
-On an armhf Kindle, copy `KinAMP/libs_hf` from the 3.0 beta archive if
-`LD_LIBRARY_PATH=libs_hf ldd ./KinAMP-minimal` reports
-`libfaad.so.2 => not found`. Preserve the newer 3.0.0 binaries and launchers.
-
-KinAMP's command FIFO and status file live under
-`${KINAMP_RUNTIME_DIR:-/tmp}`. KoReadalong does not launch, kill, or quit
-KinAMP. A missing or busy KinAMP daemon produces a clear playback error.
-Observed timing is in whole seconds, and seeks are rounded to the nearest
-second. Concurrent KinAMP clients are not supported. KinAMP's protocol cannot
-distinguish an external stop from natural EOF, so those outcomes are
-indistinguishable to KoReadalong. KinAMP 3.0.0 can rewind its synthetic clock
-when resuming with `play`, so KoReadalong resumes with a whole-second `seek` to
-the last paused position instead.
+1. Use a jailbroken Kindle running KOReader.
+2. Install KinAMP separately according to
+   [kbarni/KinAMP](https://github.com/kbarni/KinAMP). KinAMP is a separate
+   GPLv3+ dependency; KoReadalong bundles or copies no KinAMP source.
+3. Install `koreadalong.koplugin` in KOReader and restart KOReader.
+4. Open the EPUB in KOReader **before** starting KinAMP.
+5. From KinAMP's own installation/plugin, start the idle daemon:
+   `startkinamp_koreader.sh --idle`.
+6. Leave the EPUB open and leave KinAMP idle/stopped before starting playback
+   from **Read along**.
 
 With the tested Zen UI configuration, KinAMP's own KOReader plugin quits an
-idle daemon while switching between the file manager and reader. Open the EPUB
-first, then start `startkinamp_koreader.sh --idle`, and leave the document open
-while using Read along.
+idle daemon when switching between the file manager and reader. The ordering in
+steps 4–6 avoids that shutdown: keep the document open while using Read along.
 
-KinAMP is a separate GPLv3+ dependency from kbarni/KinAMP; no KinAMP source is
-bundled or copied into KoReadalong.
+KinAMP's command FIFO and status file are
+`${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_cmd` and
+`${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_status`. If `KINAMP_RUNTIME_DIR` is unset,
+both default to `/tmp`. KoReadalong does not launch, kill, or quit KinAMP.
+
+### Tested configuration
+
+Physical validation used a Kindle Paperwhite 6 with KOReader v2026.07.1 and
+KinAMP 3.0.0. It covered Bluetooth playback, playback controls, synchronized
+ephemeral highlighting, pause/resume, ±15-second seeks, chapter handoff, clip
+handoff, stop/restart, and document-close cleanup.
+
+### Troubleshooting
+
+| Symptom | Check | Remedy |
+| --- | --- | --- |
+| KinAMP's launcher reports `libfaad.so.2 => not found` | From the KinAMP directory, run `LD_LIBRARY_PATH=libs_hf ldd ./KinAMP-minimal`. Also check for `KinAMP/libs_hf` and `KinAMP/libs_pw2`. | The KinAMP 3.0.0 `kinamp.zip` tested on August 28, 2026 omitted both library directories required by its launchers. On an armhf Kindle, copy `KinAMP/libs_hf` from the 3.0 beta archive for this diagnostic result. Preserve the newer 3.0.0 binaries and launchers. |
+| Read along reports that KinAMP is not running | Check that the daemon is running and that `kinamp_cmd` and `kinamp_status` exist under `${KINAMP_RUNTIME_DIR:-/tmp}`. | Start KinAMP manually with `startkinamp_koreader.sh --idle`, then retry. KoReadalong never starts, kills, or quits the daemon. |
+| Read along reports that KinAMP is busy | Check whether KinAMP is already playing or paused, or whether another client is using it. | Stop the other playback, leave the daemon idle/stopped, and retry. Concurrent KinAMP clients are not supported. |
+| KinAMP disappears after changing between the file manager and reader | The tested Zen UI configuration can quit an idle KinAMP daemon during that switch. | Open the EPUB first, start `startkinamp_koreader.sh --idle`, and keep the document open while using Read along. |
+| Timing or seeks are slightly coarse | KinAMP publishes positions in whole seconds and rounds seek requests to the nearest second. | Treat Kindle timing as degraded; this is expected for the KinAMP path. |
+| Resume jumps backward after a pause | KinAMP 3.0.0's `play` command can rewind its synthetic clock. | Use KoReadalong's **Pause/Resume**. The adapter works around this by resuming with a whole-second `seek` to the last published paused position. |
+| Playback appears to finish after an external stop, or the final position is stale | KinAMP's protocol cannot distinguish an external stop from natural EOF. | Treat the result as ambiguous; avoid stopping the daemon from another client when reliable EOF detection matters. |
+| Audio continues after the controls disappear | **Hide** only hides the controls; it does not stop playback. | Reopen **Read along** to show the controls. Use **Stop** to stop narration and reset playback to the first clip. |
+
+### Workarounds and limitations
+
+- KinAMP timing is whole-second only; fractional positions are not reported.
+- Only one KinAMP client is supported at a time.
+- An external stop and natural EOF are indistinguishable to KoReadalong.
+- The KinAMP daemon must be running before playback starts, and its initial
+  state must be idle/stopped. KoReadalong does not manage the daemon or
+  Bluetooth.
 
 ## Use
 
 Open an EPUB containing EPUB 3 Media Overlays. Supported books gain a
 **Read along** panel with playback progress, 15-second seek buttons, and
-**Start**, **Pause/Resume**, **Stop**, and **Close** controls. Books without
-media overlays are unaffected and do not show the menu. **Close** hides the
-panel without interrupting narration; **Stop** stops narration and resets the
-session to the first clip.
+**Start**, **Pause/Resume**, **Stop**, and **Hide** controls. Books without media
+overlays are unaffected and do not show the menu. **Hide** hides the controls
+without interrupting narration; **Stop** stops narration and resets the session
+to the first clip.
 
 ### Assign a gesture
 
