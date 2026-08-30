@@ -137,7 +137,7 @@ function PlaybackDialog:init()
                 end,
             },
             {
-                text = _("Close"),
+                text = _("Hide"),
                 callback = function()
                     UIManager:close(self)
                 end,
