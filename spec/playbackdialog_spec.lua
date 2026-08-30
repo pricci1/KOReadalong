@@ -250,6 +250,27 @@ describe("playback dialog", function()
         assert.are.same({ -15, 15 }, coordinator.seeks)
     end)
 
+    it("stops refreshes when paused", function()
+        coordinator.state = "playing"
+        coordinator.position = 10
+        coordinator.duration = 20
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+        }
+        dialog:onShow()
+        assert.is_true(dialog.refresh_scheduled)
+        assert.are.equal("Pause", dialog:getButtonById("toggle").text)
+
+        dialog.buttons[1][2].callback()
+        assert.are.equal("paused", coordinator.state)
+        assert.are.equal(1, coordinator.toggle_count)
+        assert.are.equal("Resume", dialog:getButtonById("toggle").text)
+        assert.is_false(dialog.refresh_scheduled)
+        assert.is_nil(scheduler.tasks[dialog.refresh_action])
+        assert.are.equal(1, scheduler.unschedules)
+    end)
+
     it("hides while playing without changing playback state", function()
         coordinator.state = "playing"
         coordinator.position = 10
