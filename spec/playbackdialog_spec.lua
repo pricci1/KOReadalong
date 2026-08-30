@@ -227,6 +227,7 @@ describe("playback dialog", function()
         dialog:onShow()
         assert.are.equal("Ready\n— / —", dialog.status_text.text)
         assert.are.equal(0, dialog.progress_bar.percentage)
+        assert.are.equal("Hide", dialog.buttons[2][2].text)
         assert.are.equal(0, scheduler.schedules)
 
         dialog.buttons[1][2].callback()
@@ -249,7 +250,7 @@ describe("playback dialog", function()
         assert.are.same({ -15, 15 }, coordinator.seeks)
     end)
 
-    it("stops refreshes when paused or closed", function()
+    it("hides while playing without changing playback state", function()
         coordinator.state = "playing"
         coordinator.position = 10
         coordinator.duration = 20
@@ -263,15 +264,42 @@ describe("playback dialog", function()
         }
         dialog:onShow()
         assert.is_true(dialog.refresh_scheduled)
-
-        dialog.buttons[1][2].callback()
-        assert.are.equal("paused", coordinator.state)
-        assert.is_false(dialog.refresh_scheduled)
-        assert.are.equal(1, scheduler.unschedules)
+        assert.are.equal("Hide", dialog.buttons[2][2].text)
 
         dialog.buttons[2][2].callback()
+        assert.are.equal("playing", coordinator.state)
+        assert.are.equal(10, coordinator.position)
+        assert.are.equal(20, coordinator.duration)
+        assert.are.equal(0, coordinator.toggle_count)
+        assert.are.equal(0, coordinator.stop_count)
+        assert.is_false(dialog.refresh_scheduled)
+        assert.is_nil(scheduler.tasks[dialog.refresh_action])
+        assert.are.equal(1, scheduler.unschedules)
         assert.are.equal(dialog, ui_manager.closed[1])
         assert.are.equal(1, closed)
+        assert.are.equal(1, dialog.base_close_count)
+    end)
+
+    it("hides while paused without changing playback state", function()
+        coordinator.state = "paused"
+        coordinator.position = 10
+        coordinator.duration = 20
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+        }
+        dialog:onShow()
+        assert.is_nil(dialog.refresh_scheduled)
+        assert.are.equal("Hide", dialog.buttons[2][2].text)
+
+        dialog.buttons[2][2].callback()
+        assert.are.equal("paused", coordinator.state)
+        assert.are.equal(10, coordinator.position)
+        assert.are.equal(20, coordinator.duration)
+        assert.are.equal(0, coordinator.toggle_count)
+        assert.are.equal(0, coordinator.stop_count)
+        assert.are.equal(0, scheduler.unschedules)
+        assert.are.equal(dialog, ui_manager.closed[1])
         assert.are.equal(1, dialog.base_close_count)
     end)
 end)
