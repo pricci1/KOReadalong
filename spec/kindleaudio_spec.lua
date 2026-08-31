@@ -246,8 +246,40 @@ describe("KinAMP Kindle audio adapter", function()
         local opened, error_message = audio:open(AUDIO_PATH)
         assert.is_nil(opened)
         assert.matches("daemon is not running; start KinAMP first", error_message)
+        assert.is_true(audio:getStatus().recoverable)
+        assert.is_nil(audio.timer.tasks[audio.poll_action])
         assert.are.equal(0, #writer.created)
         assert.is_nil(port.start)
+    end)
+
+    it("retries a missing-daemon preflight after resetting the adapter", function()
+        local audio, timer, port, writer = make_audio{
+            port = make_port{ live = false },
+        }
+        assert.is_nil(audio:open(AUDIO_PATH))
+        assert.is_true(audio:getStatus().recoverable)
+
+        port.live = true
+        port.token = "p1"
+        port.status = daemon_status("stopped", 0, 0, "")
+        port:queue{
+            live = true,
+            status = daemon_status("stopped", 0, 0, ""),
+            token = "p2",
+        }
+        assert.is_true(audio:stop())
+        assert.are.equal("idle", audio:getStatus().state)
+        assert.is_false(audio:getStatus().recoverable)
+
+        assert.is_true(audio:open(AUDIO_PATH))
+        assert.are.equal(1, #writer.created)
+        assert.are.equal(1, command_count(port, "load"))
+        assert.is_not_nil(timer.tasks[audio.poll_action])
+        local schedules = 0
+        for _ in pairs(timer.tasks) do
+            schedules = schedules + 1
+        end
+        assert.are.equal(1, schedules)
     end)
 
     it("waits for a newly published idle token before opening", function()
@@ -372,6 +404,35 @@ describe("KinAMP Kindle audio adapter", function()
         assert.matches("KinAMP is busy", error_message)
         assert.is_nil(batch_with(port, "load"))
         assert.are.equal(0, #writer.created)
+    end)
+
+    it("retries a busy preflight after the daemon becomes idle", function()
+        local port = make_port{
+            probe_result = {
+                live = true,
+                status = daemon_status("paused", 2, 10, "/mnt/us/other.mp3"),
+                token = "busy",
+            },
+        }
+        local audio, timer, _, writer = make_audio{ port = port }
+        local opened, error_message = audio:open(AUDIO_PATH)
+        assert.is_nil(opened)
+        assert.matches("KinAMP is busy", error_message)
+        assert.is_true(audio:getStatus().recoverable)
+        assert.are.equal(0, #writer.created)
+
+        port.status = daemon_status("stopped", 0, 0, "")
+        port.token = "idle"
+        port:queue{
+            live = true,
+            status = daemon_status("stopped", 0, 0, ""),
+            token = "fresh-idle",
+        }
+        assert.is_true(audio:stop())
+        assert.is_true(audio:open(AUDIO_PATH))
+        assert.are.equal(1, #writer.created)
+        assert.are.equal(1, command_count(port, "load"))
+        assert.is_not_nil(timer.tasks[audio.poll_action])
     end)
 
     it("uses nearest whole-second initial seek and exact command ordering", function()
@@ -829,7 +890,11 @@ describe("KinAMP Kindle audio adapter", function()
         local opened, error_message = audio:open(AUDIO_PATH)
         assert.is_nil(opened)
         assert.matches("open write failed", error_message)
+        assert.is_false(audio:getStatus().recoverable)
         assert.are.equal(1, #writer.created)
+        local retry, retry_error = audio:open(AUDIO_PATH)
+        assert.is_nil(retry)
+        assert.matches("terminal error state", retry_error)
 
         port.send_error = nil
         assert.is_true(audio:stop())

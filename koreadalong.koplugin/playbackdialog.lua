@@ -158,8 +158,9 @@ function PlaybackDialog:init()
 end
 
 function PlaybackDialog:_run(action)
-    local ok, error_message = action()
-    if not ok and self.coordinator:getState() ~= "error"
+    local ok, error_message, error_reported = action()
+    if not ok and not error_reported
+        and self.coordinator:getState() ~= "error"
         and type(self.on_error) == "function" then
         self.on_error(error_message)
     end

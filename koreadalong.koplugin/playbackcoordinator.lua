@@ -150,9 +150,8 @@ function PlaybackCoordinator:getPlaybackStatus()
 end
 
 function PlaybackCoordinator:isActionEnabled()
-    -- An adapter error is terminal for this document session. Reopening the
-    -- document is the recovery path; do not expose a Start action that can
-    -- only repeat the same failed adapter session.
+    -- Once resource ownership is uncertain, an adapter error is terminal for
+    -- this document session. Safe preflight failures return to idle instead.
     return not self.closed
         and self.state ~= PlaybackCoordinator.STATES.LOADING
         and self.state ~= PlaybackCoordinator.STATES.STOPPING
@@ -267,10 +266,17 @@ function PlaybackCoordinator:_report_error(error_message)
     end
 end
 
+function PlaybackCoordinator:_adapter_error_is_recoverable()
+    local status = invoke(self.adapter, "getStatus")
+    return type(status) == "table" and status.recoverable == true
+end
+
 function PlaybackCoordinator:_fail(error_message, skip_stop)
     if self.closed then
         return nil, error_message
     end
+    local recoverable = not skip_stop
+        and self:_adapter_error_is_recoverable()
     self.generation = self.generation + 1
     self:_unschedule_poll()
     self.intent = nil
@@ -293,12 +299,23 @@ function PlaybackCoordinator:_fail(error_message, skip_stop)
         self:_clear_overlay()
     end
     self.stop_issued = false
-    self.state = PlaybackCoordinator.STATES.ERROR
+    if recoverable and not self.cleanup_pending and not self.cleanup_error then
+        -- The adapter proved that no Kindle resource or playback command was
+        -- claimed.  The extracted file is gone as well, so a later Start can
+        -- retry this document without reopening it.
+        self.current_clip_index = nil
+        self.state = PlaybackCoordinator.STATES.IDLE
+        self:_clear_overlay()
+    else
+        self.state = PlaybackCoordinator.STATES.ERROR
+    end
     self:_report_error(error_message)
     if self.cleanup_pending then
         self:_schedule_poll()
     end
-    return nil, self.error
+    -- The coordinator reports this error itself.  PlaybackDialog uses the
+    -- third result to avoid showing the same recoverable failure twice.
+    return nil, self.error, true
 end
 
 function PlaybackCoordinator:_next_clip(index)

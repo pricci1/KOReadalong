@@ -48,6 +48,7 @@ local function make_adapter()
         stops = 0,
         closes = 0,
         fail_open = nil,
+        fail_open_recoverable = false,
         fail_set_paused = nil,
         fail_stop = nil,
         stop_waits = false,
@@ -60,8 +61,13 @@ local function make_adapter()
         }
         self.commands[#self.commands + 1] = "open"
         if self.fail_open then
+            self.recoverable = self.fail_open_recoverable
+            if self.recoverable then
+                self.state = "error"
+            end
             return nil, self.fail_open
         end
+        self.recoverable = false
         self.state = "loading"
         self.position = options.position
         self.duration = nil
@@ -95,6 +101,7 @@ local function make_adapter()
         end
         if not self.stop_waits then
             self.state = "idle"
+            self.recoverable = false
             self.duration = nil
             self.paused = nil
             self.idle_active = true
@@ -114,6 +121,7 @@ local function make_adapter()
             paused = self.paused,
             idle_active = self.idle_active,
             error = self.error,
+            recoverable = self.recoverable == true and self.state == "error",
         }
     end
     return adapter
@@ -800,6 +808,39 @@ describe("playback coordinator", function()
         assert.matches("decoder failed", second_errors[1])
         assert.are.equal(1, second_adapter.stops)
         assert.are.equal(1, #second_materializer.removed)
+    end)
+
+    it("returns to idle after a recoverable adapter preflight error", function()
+        local coordinator, scheduler, adapter, materializer, _, _, errors =
+            make_fixture(clips_fixture())
+        adapter.fail_open = "KinAMP daemon is not running; start KinAMP first"
+        adapter.fail_open_recoverable = true
+
+        local started, error_message = coordinator:start()
+        assert.is_nil(started)
+        assert.matches("daemon is not running", error_message)
+        assert.are.equal("idle", coordinator:getState())
+        assert.is_true(coordinator:isActionEnabled())
+        assert.is_nil(coordinator.intent)
+        assert.is_nil(coordinator.current_audio_path)
+        assert.is_nil(coordinator.materialized_path)
+        assert.is_nil(coordinator.playback_position)
+        assert.are.equal(1, #materializer.removed)
+        assert.are.equal(1, #errors)
+        assert.is_nil(scheduler.tasks[coordinator.poll_action])
+
+        adapter.fail_open = nil
+        assert.is_true(coordinator:start())
+        assert.are.equal(2, #adapter.opens)
+        assert.are.equal(2, #materializer.paths)
+        assert.are.equal(1, scheduler.schedules)
+        assert.is_nil(coordinator:start())
+        assert.are.equal(2, #adapter.opens)
+        assert.are.equal(1, scheduler.schedules)
+
+        mark_ready(adapter)
+        scheduler:fire_any()
+        assert.are.equal("playing", coordinator:getState())
     end)
 
     it("silently caches unsupported fragment failures and closes stale callbacks", function()

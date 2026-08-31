@@ -304,9 +304,15 @@ function KindleAudio:_unschedule()
 end
 
 function KindleAudio:_error(error_message)
-    if not self.terminal_error then
-        self.terminal_error = tostring(error_message or "unknown KinAMP error")
-        self.status.error = self.terminal_error
+    local message = tostring(error_message or "unknown KinAMP error")
+    local resource_uncertain = self.playlist_owned or self.command_attempted
+    if resource_uncertain then
+        if not self.terminal_error then
+            self.terminal_error = message
+            self.status.error = self.terminal_error
+        end
+    else
+        self.status.error = message
     end
     if not self.closed then
         self:_set_state(KindleAudio.STATES.ERROR)
@@ -363,6 +369,10 @@ function KindleAudio:_request_status()
 end
 
 function KindleAudio:_send(commands)
+    -- Once a playback command reaches the FIFO, a failed write cannot prove
+    -- that the daemon consumed none of it.  Keep cleanup terminal from this
+    -- point, even when the write reports an error.
+    self.command_attempted = true
     local sent, error_message = invoke(self.port, "send", commands)
     if not sent then
         return nil, error_message or "KinAMP command was not accepted"
@@ -1025,7 +1035,10 @@ function KindleAudio:close()
 end
 
 function KindleAudio:getStatus()
-    return copy(self.status)
+    local status = copy(self.status)
+    status.recoverable = self.state == KindleAudio.STATES.ERROR
+        and not self.terminal_error
+    return status
 end
 
 return KindleAudio
