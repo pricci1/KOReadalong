@@ -131,6 +131,7 @@ Fresh Amp orbs are prepared by `.agents/setup`. On another Debian-based machine,
 ./.agents/setup
 make check
 make mpv-integration
+make kinamp-integration
 make smoke-integration
 make run
 ```
@@ -142,6 +143,12 @@ The project follows KOReader's upstream Luacheck configuration. LuaLS settings a
 `make mpv-integration` runs the production LuaJIT mpv process and Unix IPC
 transport against a temporary WAV fixture. It uses `--ao=null` only for this
 test, so it is suitable for headless development environments.
+
+`make kinamp-integration` runs the Kindle adapter under the pinned KOReader
+LuaJIT against a forked fake KinAMP daemon. The test uses a real nonblocking
+command FIFO, atomically replaced status file, and temporary one-entry M3U;
+it needs no KinAMP binary, audio device, Bluetooth, or Kindle. The same
+lightweight test is included in `make check`.
 
 `make smoke-integration` generates a synthetic EPUB and exercises the complete
 pinned-KOReader pipeline: package and SMIL parsing, private audio extraction,
