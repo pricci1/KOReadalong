@@ -323,4 +323,22 @@ describe("playback dialog", function()
         assert.are.equal(dialog, ui_manager.closed[1])
         assert.are.equal(1, dialog.base_close_count)
     end)
+
+    it("does not duplicate an error already reported by the coordinator", function()
+        local reported = 0
+        function coordinator:toggle()
+            self.state = "idle"
+            return nil, "KinAMP daemon is unavailable", true
+        end
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+            on_error = function()
+                reported = reported + 1
+            end,
+        }
+        dialog:onShow()
+        dialog.buttons[1][2].callback()
+        assert.are.equal(0, reported)
+    end)
 end)
