@@ -206,9 +206,11 @@ is bundled or copied into KoReadalong.
 
 `main.lua` selects the audio adapter with `Device:isKindle()` and lazily
 requires only the selected adapter; device selection remains outside the
-platform-neutral playback coordinator. Operator setup, troubleshooting,
-workarounds, and physical validation are documented in the
-[Kindle/KinAMP section of the README](../README.md).
+platform-neutral playback coordinator. On Kindle, it maps recoverable missing
+or busy preflight errors to focused native prompts and exposes persistent
+KinAMP setup/help alongside the Read along menu item; desktop/mpv errors remain
+unchanged. Operator setup, troubleshooting, workarounds, and physical
+validation are documented in the [Kindle/KinAMP section of the README](../README.md).
 
 ## Tooling
 

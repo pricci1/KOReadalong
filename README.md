@@ -41,24 +41,29 @@ Kindle models or firmware.
    GPLv3+ dependency; KoReadalong does not bundle or copy KinAMP source.
 3. Install `koreadalong.koplugin` in KOReader and restart KOReader.
 4. Open the EPUB in KOReader **before** starting KinAMP.
-5. From KinAMP's own installation/plugin, start the idle daemon:
-   `startkinamp_koreader.sh --idle`.
-6. Leave the EPUB open and leave KinAMP idle/stopped before starting playback
-   from **Read along**.
+5. In KOReader, open **Tools → KinAMP Player** and start the player.
+6. Choose **Stop playback** in KinAMP so the daemon remains running and idle.
+   Return to the still-open EPUB and press **Start** in **Read along**.
 
 With the tested Zen UI configuration, KinAMP's own KOReader plugin quits an
 idle daemon when switching between the file manager and reader. The ordering in
 steps 4–6 avoids that shutdown: keep the document open while using Read along.
 
+KinAMP's official KOReader plugin owns its installation, daemon lifecycle,
+Bluetooth, playlists, and management. KoReadalong owns only its temporary
+read-along playlist and session; it never launches, kills, quits, or otherwise
+manages the KinAMP daemon. On Kindle, **KinAMP setup and help** in the
+KoReadalong menu repeats this guidance and shows the
+[official KinAMP documentation](https://github.com/kbarni/KinAMP/blob/master/README.md).
+
 KinAMP's command FIFO and status file are
 `${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_cmd` and
 `${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_status`. If `KINAMP_RUNTIME_DIR` is unset,
 both default to `/tmp`. A missing or busy KinAMP daemon produces a clear
-playback error. If this is detected before KoReadalong creates a playlist or
+playback prompt. If this is detected before KoReadalong creates a playlist or
 delivers a playback command, correct the condition and press **Start** again
 without reopening the EPUB. Once resource ownership is uncertain, playback
-remains terminal for that document. KoReadalong does not launch, kill, or quit
-KinAMP.
+remains terminal for that document.
 
 ### Tested configuration
 
@@ -87,9 +92,9 @@ sanitizes media paths and is suitable for attaching to a bug report. Use
 | Symptom | Check | Remedy |
 | --- | --- | --- |
 | KinAMP's launcher reports `libfaad.so.2 => not found` | From the KinAMP directory, run `LD_LIBRARY_PATH=libs_hf ldd ./KinAMP-minimal`. Check the extracted package for `KinAMP/libs_hf` and `KinAMP/libs_pw2`. | The KinAMP 3.0.0 `kinamp.zip` tested on August 28, 2026 omitted both library directories required by its launchers. On an armhf Kindle, copy `KinAMP/libs_hf` from the 3.0 beta archive when this diagnostic reports the missing library. Preserve the newer 3.0.0 binaries and launchers. |
-| Read along reports that KinAMP is not running | Check that the daemon is running and that `kinamp_cmd` and `kinamp_status` exist under `${KINAMP_RUNTIME_DIR:-/tmp}`. | Start KinAMP manually with `startkinamp_koreader.sh --idle`, then retry. KoReadalong never starts, kills, or quits the daemon. |
-| Read along reports that KinAMP is busy | Check whether KinAMP is already playing or paused, or whether another client is using it. | Stop the other playback, leave the daemon idle/stopped, and retry. Concurrent KinAMP clients are not supported. |
-| KinAMP disappears after changing between the file manager and reader | The tested Zen UI configuration can quit an idle KinAMP daemon during that switch. | Open the EPUB first, start `startkinamp_koreader.sh --idle`, and keep the document open while using Read along. |
+| Read along reports that KinAMP is not running | Check that the daemon is running and that `kinamp_cmd` and `kinamp_status` exist under `${KINAMP_RUNTIME_DIR:-/tmp}`. | Open **Tools → KinAMP Player**, start the player, choose **Stop playback** to leave the daemon running and idle, then return to the still-open EPUB and press **Start**. KoReadalong never manages the daemon. |
+| Read along reports that KinAMP is busy | Check whether KinAMP is already playing or paused, or whether another client is using it. | Stop the current KinAMP playback or other client, leave KinAMP idle, and press **Start** again. Concurrent KinAMP clients are not supported. |
+| KinAMP disappears after changing between the file manager and reader | The tested Zen UI configuration can quit an idle KinAMP daemon during that switch. | Open the EPUB first, use **Tools → KinAMP Player** to start KinAMP, and keep the document open while using Read along. |
 | Timing or seeks are slightly coarse | KinAMP publishes positions in whole seconds and rounds seek requests to the nearest second. | Treat Kindle timing as degraded; this is expected for the KinAMP path. |
 | Resume jumps backward after a pause | KinAMP 3.0.0's `play` command can rewind its synthetic clock. | Use KoReadalong's **Pause/Resume**. The adapter works around this by resuming with a whole-second `seek` to the last published paused position. |
 | Playback appears to finish after an external stop, or the final position is stale | KinAMP's protocol cannot distinguish an external stop from natural EOF. | Treat the result as ambiguous; avoid stopping the daemon from another client when reliable EOF detection matters. |
