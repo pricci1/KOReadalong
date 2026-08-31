@@ -1,0 +1,1369 @@
+#!/bin/sh
+
+# Read-only KinAMP/KoReadalong diagnostics for constrained Kindle shells.
+# This script deliberately does not open the command FIFO, send a command,
+# execute a KinAMP launcher/binary, signal a process, or modify the filesystem.
+# shellcheck disable=SC2016
+
+LC_ALL=C
+export LC_ALL
+
+PROGRAM=${0##*/}
+MAX_STATUS_BYTES=16384
+MAX_STATUS_LINES=64
+MAX_VERSION_BYTES=256
+MAX_LDD_BYTES=8192
+
+EXIT_OK=0
+EXIT_USAGE=1
+EXIT_PROBLEM=2
+EXIT_INCOMPLETE=3
+
+problem=0
+incomplete=0
+runtime_problem=0
+fifo_problem=0
+status_problem=0
+status_malformed=0
+status_oversized=0
+status_busy=0
+status_valid=0
+status_state=
+status_pid=
+pid_problem=0
+package_problem=0
+dependency_problem=0
+faad_missing=0
+package_checks=0
+check_launcher=0
+check_binary=0
+skip_dependencies=0
+
+runtime_dir=${KINAMP_RUNTIME_DIR-}
+[ -n "$runtime_dir" ] || runtime_dir=/tmp
+fifo_path=${KINAMP_COMMAND_FIFO-}
+status_path=${KINAMP_STATUS_FILE-}
+
+kinamp_dir=${KINAMP_DIR-}
+if [ -z "$kinamp_dir" ]; then
+    kinamp_dir=${KINAMP_ROOT-}
+fi
+kinamp_dir_given=0
+[ -n "$kinamp_dir" ] && kinamp_dir_given=1
+
+launcher_path=${KINAMP_LAUNCHER-}
+binary_path=${KINAMP_BINARY-}
+libs_dir=${KINAMP_LIB_DIR-}
+
+koreader_dir=${KOREADER_DIR-}
+koreader_bin=${KOREADER_BIN-}
+kinamp_version_file=${KINAMP_VERSION_FILE-}
+koreader_version_file=${KOREADER_VERSION_FILE-}
+ldd_override=${KINAMP_LDD-}
+
+[ -n "$launcher_path" ] && check_launcher=1
+[ -n "$binary_path" ] && check_binary=1
+[ -n "$launcher_path" ] && package_checks=1
+[ -n "$binary_path" ] && package_checks=1
+[ -n "$libs_dir" ] && package_checks=1
+[ -n "$koreader_dir" ] && package_checks=1
+[ -n "$koreader_bin" ] && package_checks=1
+[ -n "$kinamp_version_file" ] && package_checks=1
+[ -n "$koreader_version_file" ] && package_checks=1
+[ -n "$ldd_override" ] && package_checks=1
+
+usage() {
+    cat <<EOF
+Usage: $PROGRAM [OPTIONS]
+
+Read-only KinAMP and KoReadalong diagnostics. The script never starts,
+stops, signals, or sends commands to KinAMP/KOReader, never executes the
+KinAMP launcher or binary, and never creates or removes files.
+
+Runtime and status options (CLI overrides environment):
+  -r, --runtime-dir DIR       Runtime directory (default: KINAMP_RUNTIME_DIR
+                              or /tmp).
+      --command-fifo PATH     FIFO (default: DIR/kinamp_cmd).
+      --status-file PATH       Status file (default: DIR/kinamp_status).
+
+KinAMP package options:
+  -k, --kinamp-dir DIR        Explicit KinAMP package directory. Only this
+                              directory and fixed names are inspected; there
+                              is no filesystem-wide search.
+  -l, --launcher PATH         Launcher to check, without executing it.
+  -b, --binary PATH           KinAMP binary to check and, unless skipped,
+                              inspect with ldd (the binary is not executed).
+      --libs-dir DIR          Library directory to use for the ldd check.
+      --kinamp-version-file PATH
+                              Explicit bounded KinAMP version evidence file.
+      --ldd PATH               Explicit ldd helper instead of ldd on PATH.
+      --skip-dependencies      Do not run a dynamic dependency helper.
+
+KOReader version options:
+      --koreader-dir DIR      KOReader lib/koreader directory to inspect.
+      --koreader-bin PATH     KOReader launcher/binary path; it is not run.
+      --koreader-version-file PATH
+                              Explicit bounded KOReader version evidence file.
+
+Other options:
+  -h, --help                  Show this help and exit.
+
+Environment overrides:
+  KINAMP_RUNTIME_DIR KINAMP_COMMAND_FIFO KINAMP_STATUS_FILE
+  KINAMP_DIR (or KINAMP_ROOT) KINAMP_LAUNCHER KINAMP_BINARY KINAMP_LIB_DIR
+  KINAMP_VERSION_FILE KINAMP_LDD
+  KOREADER_DIR KOREADER_BIN KOREADER_VERSION_FILE
+
+The report checks architecture; bounded version evidence; the selected
+runtime directory; FIFO/status presence and type; a status PID without using
+kill; sanitized state/index/position/duration/media fields; package files;
+and missing dynamic libraries such as libfaad.so.2 when a safe binary path
+and ldd helper are available. Status/media reads are capped at 16384 bytes
+and 64 lines. Media and playlist values are basename-only and sanitized.
+
+Exit status:
+  0   Checks completed without a known problem or limitation.
+  1   Invalid option or path argument.
+  2   One or more known runtime/package/dependency checks failed.
+  3   No known failure, but a requested check was inconclusive (for example,
+      /proc, ldd, or a required inspection utility is unavailable).
+
+Examples:
+  $PROGRAM --runtime-dir /tmp --kinamp-dir /mnt/us/extensions/KinAMP
+  $PROGRAM --status-file /tmp/kinamp_status --binary ./KinAMP-minimal
+EOF
+}
+
+usage_error() {
+    printf '%s\n' "ERROR: $1" >&2
+    printf '%s\n' "Use $PROGRAM --help for usage." >&2
+    exit "$EXIT_USAGE"
+}
+
+validate_path() {
+    path_value=$1
+    case "$path_value" in
+        ''|-*|*[![:print:]]*)
+            return 1
+            ;;
+    esac
+    [ "${#path_value}" -le 4096 ]
+}
+
+validate_option_path() {
+    option_name=$1
+    option_value=$2
+    if ! validate_path "$option_value"; then
+        usage_error "$option_name must be a non-empty printable path of at most 4096 characters"
+    fi
+}
+
+command_available() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+path_is_symlink() {
+    [ -L "$1" ] 2>/dev/null
+}
+
+path_type() {
+    type_path=$1
+    type_result=missing
+
+    if path_is_symlink "$type_path"; then
+        type_result=symlink
+        return
+    fi
+    if [ ! -e "$type_path" ] 2>/dev/null; then
+        type_result=missing
+        return
+    fi
+
+    if [ -n "$STAT_CMD" ]; then
+        type_stat=$(
+            "$STAT_CMD" -c '%F' "$type_path" 2>/dev/null
+        ) || type_stat=
+        case "$type_stat" in
+            fifo|pipe|'named pipe')
+                type_result=fifo
+                return
+                ;;
+            'regular file'|regular)
+                type_result='file'
+                return
+                ;;
+            directory)
+                type_result=directory
+                return
+                ;;
+        esac
+    fi
+
+    if [ -d "$type_path" ] 2>/dev/null; then
+        type_result=directory
+    elif [ -f "$type_path" ] 2>/dev/null; then
+        type_result='file'
+    elif [ -p "$type_path" ] 2>/dev/null; then
+        type_result=fifo
+    else
+        type_result=special
+    fi
+}
+
+display_path() {
+    display_result=$1
+    if [ "${#display_result}" -gt 160 ]; then
+        display_result='[path omitted: longer than 160 characters]'
+    fi
+}
+
+basename_safe() {
+    basename_value=$1
+    basename_value=${basename_value##*/}
+    if [ -z "$basename_value" ]; then
+        basename_result='(none)'
+        return
+    fi
+    if [ -n "$AWK_CMD" ]; then
+        basename_result=$(
+            printf '%s\n' "$basename_value" |
+                "$AWK_CMD" '
+                    {
+                        gsub(/[^A-Za-z0-9._-]/, "_", $0)
+                        print substr($0, 1, 80)
+                        exit
+                    }
+                '
+        )
+    else
+        basename_result='[redacted]'
+    fi
+    [ -n "$basename_result" ] || basename_result='(none)'
+}
+
+file_byte_count() {
+    byte_count_result=$(wc -c < "$1" 2>/dev/null) || {
+        byte_count_result=
+        return 1
+    }
+    byte_count_result=$(printf '%s' "$byte_count_result" | tr -d '[:space:]')
+    case "$byte_count_result" in
+        ''|*[!0-9]*)
+            byte_count_result=
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+read_bounded_file() {
+    bounded_result=
+    bounded_status=1
+    if [ -n "$DD_CMD" ]; then
+        bounded_result=$(
+            "$DD_CMD" if="$1" bs="$2" count=1 2>/dev/null
+        )
+        bounded_status=$?
+    elif [ -n "$HEAD_CMD" ]; then
+        bounded_result=$(
+            "$HEAD_CMD" -c "$2" "$1" 2>/dev/null
+        )
+        bounded_status=$?
+    else
+        return 127
+    fi
+    return "$bounded_status"
+}
+
+print_pass() {
+    printf 'CHECK %s: PASS - %s\n' "$1" "$2"
+}
+
+print_info() {
+    printf 'CHECK %s: INFO - %s\n' "$1" "$2"
+}
+
+print_warn() {
+    printf 'CHECK %s: WARN - %s\n' "$1" "$2"
+}
+
+print_fail() {
+    problem=1
+    printf 'CHECK %s: FAIL - %s\n' "$1" "$2"
+}
+
+check_runtime_dir() {
+    display_path "$runtime_dir"
+    if [ -d "$runtime_dir" ] 2>/dev/null; then
+        print_pass 'runtime.directory' "selected=$display_result"
+    elif [ -e "$runtime_dir" ] 2>/dev/null; then
+        runtime_problem=1
+        print_fail 'runtime.directory' 'selected path exists but is not a directory'
+    else
+        runtime_problem=1
+        print_fail 'runtime.directory' "selected directory is missing ($display_result)"
+    fi
+}
+
+check_fifo_path() {
+    fifo_path_to_check=$1
+    display_path "$fifo_path_to_check"
+    path_type "$fifo_path_to_check"
+    case "$type_result" in
+        fifo)
+            print_pass 'runtime.command_fifo' "type=FIFO path=$display_result"
+            ;;
+        missing)
+            fifo_problem=1
+            print_fail 'runtime.command_fifo' "missing path=$display_result"
+            ;;
+        symlink)
+            fifo_problem=1
+            print_fail 'runtime.command_fifo' 'path is a symlink; it was not followed'
+            ;;
+        *)
+            fifo_problem=1
+            print_fail 'runtime.command_fifo' "expected FIFO, found=$type_result"
+            ;;
+    esac
+}
+
+check_status_path() {
+    status_path_to_check=$1
+    display_path "$status_path_to_check"
+    path_type "$status_path_to_check"
+    status_type_result=$type_result
+    case "$type_result" in
+        file)
+            if [ ! -r "$status_path_to_check" ] 2>/dev/null; then
+                status_problem=1
+                print_fail 'runtime.status_file' 'regular file is not readable'
+                return
+            fi
+            print_pass 'runtime.status_file' "type=regular-file path=$display_result"
+            ;;
+        missing)
+            status_problem=1
+            print_fail 'runtime.status_file' "missing path=$display_result"
+            ;;
+        symlink)
+            status_problem=1
+            print_fail 'runtime.status_file' 'path is a symlink; it was not followed'
+            ;;
+        *)
+            status_problem=1
+            print_fail 'runtime.status_file' "expected regular file, found=$type_result"
+            ;;
+    esac
+}
+
+check_optional_tools() {
+    if command_available stat; then
+        STAT_CMD=stat
+        print_pass 'tool.stat' 'available for type checks'
+    else
+        STAT_CMD=
+        print_info 'tool.stat' 'unavailable; shell test primaries are used where supported'
+    fi
+
+    if command_available readlink; then
+        print_pass 'tool.readlink' 'available; not required for safe link rejection'
+    else
+        print_info 'tool.readlink' 'unavailable; test -L is used for symlink rejection'
+    fi
+
+    if command_available awk; then
+        AWK_CMD='awk'
+    else
+        AWK_CMD=
+    fi
+    if command_available dd; then
+        DD_CMD='dd'
+    else
+        DD_CMD=
+    fi
+    if command_available head; then
+        HEAD_CMD='head'
+    else
+        HEAD_CMD=
+    fi
+    if command_available wc; then
+        WC_AVAILABLE=1
+    else
+        WC_AVAILABLE=0
+    fi
+}
+
+check_architecture() {
+    architecture=$(uname -m 2>/dev/null) || architecture=
+    if [ -z "$architecture" ]; then
+        incomplete=1
+        print_info 'machine.architecture' 'uname -m unavailable'
+    else
+        if [ -n "$AWK_CMD" ]; then
+            architecture_safe=$(
+                printf '%s\n' "$architecture" |
+                    "$AWK_CMD" '
+                        { gsub(/[^A-Za-z0-9_.-]/, "_", $0); print substr($0, 1, 32); exit }
+                    '
+            )
+        else
+            architecture_safe='[redacted]'
+        fi
+        print_pass 'machine.architecture' "uname_m=$architecture_safe"
+    fi
+
+    libs_family=
+    case "$architecture" in
+        armhf|armv7*|armv8l)
+            libs_family=libs_hf
+            ;;
+        armv5*|armv6*)
+            libs_family=libs_pw2
+            ;;
+    esac
+}
+
+check_version_file() {
+    version_label=$1
+    version_file_path=$2
+    path_type "$version_file_path"
+    case "$type_result" in
+        missing)
+            print_info "version.$version_label" 'bounded version evidence file is missing'
+            return
+            ;;
+        symlink)
+            incomplete=1
+            print_info "version.$version_label" 'version evidence path is a symlink; it was not followed'
+            return
+            ;;
+        file)
+            ;;
+        *)
+            incomplete=1
+            print_info "version.$version_label" "version evidence path is not a regular file (found=$type_result)"
+            return
+            ;;
+    esac
+
+    if ! file_byte_count "$version_file_path"; then
+        incomplete=1
+        print_info "version.$version_label" 'unable to measure bounded version evidence'
+        return
+    fi
+    if [ "$byte_count_result" -gt "$MAX_VERSION_BYTES" ]; then
+        incomplete=1
+        print_info "version.$version_label" 'version evidence exceeds 256 bytes; it was not read'
+        return
+    fi
+    read_bounded_file "$version_file_path" $((MAX_VERSION_BYTES + 1))
+    if [ "$bounded_status" -ne 0 ]; then
+        incomplete=1
+        print_info "version.$version_label" 'unable to read bounded version evidence'
+        return
+    fi
+    version_evidence=
+    if [ -n "$AWK_CMD" ]; then
+        version_evidence=$(
+            printf '%s\n' "$bounded_result" |
+                "$AWK_CMD" '
+                    {
+                        if (length($0) <= 64 && $0 ~ /^[vV]?[0-9][A-Za-z0-9._+-]*$/) {
+                            print $0
+                        } else if (length($0) >= 7 && length($0) <= 64 && $0 ~ /^[0-9A-Fa-f]+$/) {
+                            print $0
+                        } else {
+                            print "unrecognized"
+                        }
+                        exit
+                    }
+                '
+        )
+    else
+        incomplete=1
+        print_info "version.$version_label" 'awk unavailable; evidence was not displayed'
+        return
+    fi
+    basename_safe "$version_file_path"
+    if [ "$version_evidence" = unrecognized ] || [ -z "$version_evidence" ]; then
+        print_info "version.$version_label" "file present but no recognized version token (source=$basename_result)"
+    else
+        print_pass "version.$version_label" "evidence=$version_evidence source=$basename_result"
+    fi
+}
+
+find_version_candidate() {
+    version_candidate=
+    for version_candidate_path in "$@"; do
+        path_type "$version_candidate_path"
+        if [ "$type_result" = file ]; then
+            version_candidate=$version_candidate_path
+            return
+        fi
+    done
+}
+
+path_parent() {
+    parent_input=$1
+    case "$parent_input" in
+        */*)
+            parent_result=${parent_input%/*}
+            [ -n "$parent_result" ] || parent_result=/
+            ;;
+        *)
+            parent_result=.
+            ;;
+    esac
+}
+
+check_koreader_evidence() {
+    if [ -n "$koreader_version_file" ]; then
+        check_version_file koreader "$koreader_version_file"
+        return
+    fi
+
+    koreader_candidate_dir=
+    if [ -n "$koreader_dir" ]; then
+        validate_option_path KOREADER_DIR "$koreader_dir"
+        path_type "$koreader_dir"
+        if [ "$type_result" != directory ]; then
+            package_problem=1
+            print_fail 'koreader.directory' "expected directory, found=$type_result"
+            return
+        fi
+        print_pass 'koreader.directory' 'selected directory is present'
+        koreader_candidate_dir=$koreader_dir
+    elif [ -n "$koreader_bin" ]; then
+        validate_option_path KOREADER_BIN "$koreader_bin"
+        path_type "$koreader_bin"
+        case "$type_result" in
+            file)
+                if [ -x "$koreader_bin" ] 2>/dev/null; then
+                    print_pass 'koreader.binary' 'present and executable; not executed'
+                else
+                    package_problem=1
+                    print_fail 'koreader.binary' 'present but not executable'
+                fi
+                path_parent "$koreader_bin"
+                koreader_candidate_dir=$parent_result
+                ;;
+            symlink)
+                package_problem=1
+                print_fail 'koreader.binary' 'path is a symlink; it was not followed or executed'
+                return
+                ;;
+            missing)
+                package_problem=1
+                print_fail 'koreader.binary' 'path is missing'
+                return
+                ;;
+            *)
+                package_problem=1
+                print_fail 'koreader.binary' "expected regular file, found=$type_result"
+                return
+                ;;
+        esac
+    else
+        print_info 'version.koreader' 'not selected; provide --koreader-dir, --koreader-bin, or --koreader-version-file'
+        return
+    fi
+
+    path_parent "$koreader_candidate_dir"
+    koreader_parent_dir=$parent_result
+    find_version_candidate \
+        "$koreader_candidate_dir/git-rev" \
+        "$koreader_candidate_dir/version" \
+        "$koreader_candidate_dir/VERSION" \
+        "$koreader_candidate_dir/../lib/koreader/git-rev" \
+        "$koreader_candidate_dir/../lib/koreader/version" \
+        "$koreader_parent_dir/git-rev" \
+        "$koreader_parent_dir/version"
+    if [ -n "$version_candidate" ]; then
+        check_version_file koreader "$version_candidate"
+    else
+        print_info 'version.koreader' 'no bounded git-rev/version file found at selected KOReader location'
+    fi
+}
+
+check_kinamp_evidence() {
+    if [ -n "$kinamp_version_file" ]; then
+        validate_option_path KINAMP_VERSION_FILE "$kinamp_version_file"
+        check_version_file kinamp "$kinamp_version_file"
+    elif [ -n "$kinamp_dir" ]; then
+        find_version_candidate \
+            "$kinamp_dir/VERSION" \
+            "$kinamp_dir/version" \
+            "$kinamp_dir/git-rev"
+        if [ -n "$version_candidate" ]; then
+            check_version_file kinamp "$version_candidate"
+        else
+            print_info 'version.kinamp' 'no bounded VERSION/version/git-rev file found at selected KinAMP location'
+        fi
+    else
+        print_info 'version.kinamp' 'not selected; provide --kinamp-dir or --kinamp-version-file'
+    fi
+}
+
+check_launcher_path() {
+    display_path "$launcher_path"
+    path_type "$launcher_path"
+    case "$type_result" in
+        file)
+            if [ -x "$launcher_path" ] 2>/dev/null; then
+                print_pass 'kinamp.launcher' "present and executable path=$display_result (not executed)"
+            else
+                package_problem=1
+                print_fail 'kinamp.launcher' 'present but not executable'
+            fi
+            ;;
+        missing)
+            package_problem=1
+            print_fail 'kinamp.launcher' "missing path=$display_result"
+            ;;
+        symlink)
+            package_problem=1
+            print_fail 'kinamp.launcher' 'path is a symlink; it was not followed or executed'
+            ;;
+        *)
+            package_problem=1
+            print_fail 'kinamp.launcher' "expected regular file, found=$type_result"
+            ;;
+    esac
+}
+
+check_binary_path() {
+    display_path "$binary_path"
+    path_type "$binary_path"
+    binary_safe=0
+    case "$type_result" in
+        file)
+            if [ -x "$binary_path" ] 2>/dev/null; then
+                print_pass 'kinamp.binary' "present and executable path=$display_result (not executed)"
+                binary_safe=1
+            else
+                package_problem=1
+                print_fail 'kinamp.binary' 'present but not executable'
+            fi
+            ;;
+        missing)
+            package_problem=1
+            print_fail 'kinamp.binary' "missing path=$display_result"
+            ;;
+        symlink)
+            package_problem=1
+            print_fail 'kinamp.binary' 'path is a symlink; it was not followed or executed'
+            ;;
+        *)
+            package_problem=1
+            print_fail 'kinamp.binary' "expected regular file, found=$type_result"
+            ;;
+    esac
+}
+
+check_library_layout() {
+    dependency_lib_dir=
+    if [ -n "$libs_dir" ]; then
+        validate_option_path KINAMP_LIB_DIR "$libs_dir"
+        path_type "$libs_dir"
+        case "$type_result" in
+            directory)
+                dependency_lib_dir=$libs_dir
+                print_pass 'kinamp.library_dir' 'explicit library directory is present'
+                ;;
+            symlink)
+                package_problem=1
+                print_fail 'kinamp.library_dir' 'explicit library directory is a symlink; it was not followed'
+                ;;
+            *)
+                package_problem=1
+                print_fail 'kinamp.library_dir' "explicit library directory is unavailable (found=$type_result)"
+                ;;
+        esac
+    elif [ -n "$kinamp_dir" ] && [ -n "$libs_family" ]; then
+        library_candidate=$kinamp_dir/$libs_family
+        path_type "$library_candidate"
+        if [ "$type_result" = directory ]; then
+            dependency_lib_dir=$library_candidate
+            print_pass 'kinamp.library_dir' "selected architecture layout=$libs_family"
+        else
+            print_info 'kinamp.library_dir' "expected $libs_family directory is not present under selected KinAMP directory"
+        fi
+    elif [ -n "$kinamp_dir" ]; then
+        print_info 'kinamp.library_dir' 'architecture-specific library layout was not selected'
+    fi
+}
+
+parse_dependency_output() {
+    dependency_parse_output=
+    if [ -n "$AWK_CMD" ]; then
+        dependency_parse_output=$(
+            printf '%s\n' "$ldd_output" |
+                "$AWK_CMD" '
+                    function clean_name(value) {
+                        sub(/:.*/, "", value)
+                        gsub(/[^A-Za-z0-9_.+-]/, "_", value)
+                        return substr(value, 1, 80)
+                    }
+                    {
+                        if ($0 !~ /not found/) next
+                        candidate=""
+                        for (i = 1; i <= NF; i++) {
+                            if ($i ~ /^lib[A-Za-z0-9_.+-]+[.]so/) {
+                                candidate=clean_name($i)
+                                break
+                            }
+                        }
+                        if (candidate != "" && !seen[candidate] && count < 8) {
+                            seen[candidate]=1
+                            count++
+                            print "missing=" candidate
+                        }
+                    }
+                    END { print "missing_count=" count + 0 }
+                '
+        )
+    fi
+}
+
+check_dependencies() {
+    if [ "$skip_dependencies" -eq 1 ]; then
+        print_info 'kinamp.dependencies' 'explicitly skipped; no helper or binary was executed'
+        return
+    fi
+    if [ "$binary_safe" -ne 1 ]; then
+        print_info 'kinamp.dependencies' 'skipped because no safe, selected executable KinAMP binary is available'
+        return
+    fi
+
+    LDD_CMD=
+    if [ -n "$ldd_override" ]; then
+        validate_option_path KINAMP_LDD "$ldd_override"
+        path_type "$ldd_override"
+        if [ "$type_result" != file ] || [ ! -x "$ldd_override" ] 2>/dev/null; then
+            incomplete=1
+            print_info 'kinamp.dependencies' 'explicit ldd helper is unavailable or not executable'
+            return
+        fi
+        if path_is_symlink "$ldd_override"; then
+            incomplete=1
+            print_info 'kinamp.dependencies' 'explicit ldd helper is a symlink; it was not followed'
+            return
+        fi
+        LDD_CMD=$ldd_override
+    elif command_available ldd; then
+        LDD_CMD=ldd
+    else
+        incomplete=1
+        print_info 'kinamp.dependencies' 'ldd is unavailable; no dynamic dependency conclusion was made'
+        return
+    fi
+
+    if [ -z "$AWK_CMD" ]; then
+        incomplete=1
+        print_info 'kinamp.dependencies' 'awk is unavailable; bounded ldd output was not interpreted'
+        return
+    fi
+    if [ -z "$HEAD_CMD" ] && [ -z "$DD_CMD" ]; then
+        incomplete=1
+        print_info 'kinamp.dependencies' 'head/dd are unavailable; bounded ldd output was not read'
+        return
+    fi
+
+    if [ -n "$HEAD_CMD" ]; then
+        if [ -n "$dependency_lib_dir" ]; then
+            ldd_output=$(
+                LD_LIBRARY_PATH="$dependency_lib_dir" "$LDD_CMD" "$binary_path" 2>&1 |
+                    "$HEAD_CMD" -c "$MAX_LDD_BYTES"
+            )
+        else
+            ldd_output=$(
+                "$LDD_CMD" "$binary_path" 2>&1 |
+                    "$HEAD_CMD" -c "$MAX_LDD_BYTES"
+            )
+        fi
+    else
+        if [ -n "$dependency_lib_dir" ]; then
+            ldd_output=$(
+                LD_LIBRARY_PATH="$dependency_lib_dir" "$LDD_CMD" "$binary_path" 2>&1 |
+                    "$DD_CMD" bs="$MAX_LDD_BYTES" count=1 2>/dev/null
+            )
+        else
+            ldd_output=$(
+                "$LDD_CMD" "$binary_path" 2>&1 |
+                    "$DD_CMD" bs="$MAX_LDD_BYTES" count=1 2>/dev/null
+            )
+        fi
+    fi
+
+    if [ -z "$ldd_output" ]; then
+        incomplete=1
+        print_info 'kinamp.dependencies' 'ldd produced no bounded output; dependency check is inconclusive'
+        return
+    fi
+    parse_dependency_output
+    missing_count=0
+    missing_names=
+    while IFS= read -r dependency_line; do
+        case "$dependency_line" in
+            missing=*)
+                missing_name=${dependency_line#missing=}
+                if [ -z "$missing_names" ]; then
+                    missing_names=$missing_name
+                else
+                    missing_names=$missing_names,$missing_name
+                fi
+                missing_count=$((missing_count + 1))
+                [ "$missing_name" = libfaad.so.2 ] && faad_missing=1
+                ;;
+        esac
+    done <<EOF
+$dependency_parse_output
+EOF
+
+    if [ "$missing_count" -gt 0 ]; then
+        dependency_problem=1
+        print_fail 'kinamp.dependencies' "ldd reports missing=$missing_names"
+        if [ "$faad_missing" -eq 1 ]; then
+            print_fail 'kinamp.dependency.libfaad.so.2' 'observed missing libfaad.so.2 case'
+        fi
+    else
+        print_pass 'kinamp.dependencies' 'bounded ldd output reports no missing libraries'
+    fi
+}
+
+parse_status_content() {
+    status_parse_output=
+    if [ -z "$AWK_CMD" ]; then
+        incomplete=1
+        status_problem=1
+        print_fail 'runtime.status_fields' 'awk is unavailable; bounded status was not interpreted'
+        return 1
+    fi
+    status_parse_output=$(
+        printf '%s\n' "$status_content" |
+            "$AWK_CMD" -v max_lines="$MAX_STATUS_LINES" '
+                function integer_ok(value, allow_negative) {
+                    if (allow_negative && value == "-1") return 1
+                    if (value !~ /^[0-9]+$/) return 0
+                    return length(value) <= 20
+                }
+                function safe_basename(value,    result) {
+                    result=value
+                    sub(/^.*\//, "", result)
+                    if (result == "") return "(none)"
+                    gsub(/[^A-Za-z0-9._-]/, "_", result)
+                    return substr(result, 1, 80)
+                }
+                function safe_mode(value,    result) {
+                    result=value
+                    if (result == "") return "(empty)"
+                    gsub(/[^A-Za-z0-9._-]/, "_", result)
+                    return substr(result, 1, 32)
+                }
+                function safe_version(key, value) {
+                    if (length(value) <= 64 && value ~ /^[vV]?[0-9][A-Za-z0-9._+-]*$/) {
+                        print key "=" value
+                    } else if (length(value) >= 7 && length(value) <= 64 && value ~ /^[0-9A-Fa-f]+$/) {
+                        print key "=" value
+                    } else {
+                        print key "=unrecognized"
+                    }
+                }
+                NR > max_lines {
+                    too_many=1
+                    next
+                }
+                {
+                    sub(/\r$/, "")
+                    if ($0 == "") next
+                    if ($0 !~ /^[A-Za-z_][A-Za-z0-9_-]*=/) {
+                        malformed=1
+                        next
+                    }
+                    equals=index($0, "=")
+                    key=substr($0, 1, equals - 1)
+                    value=substr($0, equals + 1)
+                    if (seen[key]) {
+                        duplicate=1
+                        next
+                    }
+                    seen[key]=1
+                    if (key == "state") {
+                        state_seen=1
+                        if (value != "playing" && value != "paused" && value != "stopped") {
+                            invalid=1
+                        } else {
+                            print "state=" value
+                        }
+                    } else if (key == "pid") {
+                        if (!integer_ok(value, 0)) invalid=1
+                        else print "pid=" value
+                    } else if (key == "mode") {
+                        print "mode=" safe_mode(value)
+                    } else if (key == "index") {
+                        if (!integer_ok(value, 1)) invalid=1
+                        else print "index=" value
+                    } else if (key == "count") {
+                        if (!integer_ok(value, 0)) invalid=1
+                        else print "count=" value
+                    } else if (key == "pos" || key == "position") {
+                        if (!integer_ok(value, 0)) invalid=1
+                        else print "position=" value
+                    } else if (key == "dur" || key == "duration") {
+                        if (!integer_ok(value, 0)) invalid=1
+                        else print "duration=" value
+                    } else if (key == "path") {
+                        print "media=" safe_basename(value)
+                    } else if (key == "playlist") {
+                        print "playlist=" safe_basename(value)
+                    } else if (key == "version" || key == "kinamp_version") {
+                        safe_version("status_version", value)
+                    } else {
+                        unknown=unknown + 1
+                    }
+                }
+                END {
+                    if (!state_seen) missing_state=1
+                    print "meta_malformed=" (malformed + 0)
+                    print "meta_duplicate=" (duplicate + 0)
+                    print "meta_invalid=" (invalid + 0)
+                    print "meta_too_many=" (too_many + 0)
+                    print "meta_missing_state=" (missing_state + 0)
+                    print "meta_unknown=" (unknown + 0)
+                }
+            '
+    )
+    status_state=
+    status_pid=
+    status_mode=
+    status_index=
+    status_count=
+    status_position=
+    status_duration=
+    status_media=
+    status_playlist=
+    status_version=
+    status_meta_malformed=0
+    status_meta_duplicate=0
+    status_meta_invalid=0
+    status_meta_too_many=0
+    status_meta_missing_state=0
+    status_unknown=0
+    while IFS= read -r status_line; do
+        status_key=${status_line%%=*}
+        status_value=${status_line#*=}
+        case "$status_key" in
+            state) status_state=$status_value ;;
+            pid) status_pid=$status_value ;;
+            mode) status_mode=$status_value ;;
+            index) status_index=$status_value ;;
+            count) status_count=$status_value ;;
+            position) status_position=$status_value ;;
+            duration) status_duration=$status_value ;;
+            media) status_media=$status_value ;;
+            playlist) status_playlist=$status_value ;;
+            status_version) status_version=$status_value ;;
+            meta_malformed) status_meta_malformed=$status_value ;;
+            meta_duplicate) status_meta_duplicate=$status_value ;;
+            meta_invalid) status_meta_invalid=$status_value ;;
+            meta_too_many) status_meta_too_many=$status_value ;;
+            meta_missing_state) status_meta_missing_state=$status_value ;;
+            meta_unknown) status_unknown=$status_value ;;
+        esac
+    done <<EOF
+$status_parse_output
+EOF
+
+    if [ "$status_meta_malformed" -ne 0 ] \
+        || [ "$status_meta_duplicate" -ne 0 ] \
+        || [ "$status_meta_invalid" -ne 0 ] \
+        || [ "$status_meta_too_many" -ne 0 ] \
+        || [ "$status_meta_missing_state" -ne 0 ]; then
+        status_problem=1
+        status_malformed=1
+        print_fail 'runtime.status_fields' 'status is malformed, duplicated, invalid, or missing state'
+        return 1
+    fi
+
+    status_valid=1
+    status_summary="state=$status_state"
+    [ -n "$status_pid" ] && status_summary=$status_summary" pid=$status_pid"
+    [ -n "$status_mode" ] && status_summary=$status_summary" mode=$status_mode"
+    [ -n "$status_index" ] && status_summary=$status_summary" index=$status_index"
+    [ -n "$status_count" ] && status_summary=$status_summary" count=$status_count"
+    [ -n "$status_position" ] && status_summary=$status_summary" position=$status_position"
+    [ -n "$status_duration" ] && status_summary=$status_summary" duration=$status_duration"
+    [ -n "$status_media" ] && status_summary=$status_summary" media=$status_media"
+    [ -n "$status_playlist" ] && status_summary=$status_summary" playlist=$status_playlist"
+    [ -n "$status_version" ] && status_summary=$status_summary" version=$status_version"
+    status_summary=$status_summary" unknown_fields=$status_unknown"
+    print_pass 'runtime.status_fields' "$status_summary"
+    if [ "$status_state" = stopped ]; then
+        print_pass 'daemon.state' 'stopped/idle'
+    else
+        status_busy=1
+        print_warn 'daemon.state' "active state=$status_state; leave KinAMP stopped/idle before Read along"
+    fi
+    return 0
+}
+
+check_status_content() {
+    if [ "$status_type_result" != file ]; then
+        print_info 'runtime.status_read' 'skipped because status path is not a safe regular file'
+        return
+    fi
+    if [ "$WC_AVAILABLE" -ne 1 ]; then
+        incomplete=1
+        status_problem=1
+        print_fail 'runtime.status_read' 'wc is unavailable; bounded byte check was not possible'
+        return
+    fi
+    if ! file_byte_count "$status_path"; then
+        incomplete=1
+        status_problem=1
+        print_fail 'runtime.status_read' 'unable to measure status file safely'
+        return
+    fi
+    if [ "$byte_count_result" -gt "$MAX_STATUS_BYTES" ]; then
+        status_problem=1
+        status_oversized=1
+        print_fail 'runtime.status_read' 'status exceeds the 16384-byte read limit; content was not read'
+        return
+    fi
+    read_bounded_file "$status_path" $((MAX_STATUS_BYTES + 1))
+    if [ "$bounded_status" -ne 0 ]; then
+        incomplete=1
+        status_problem=1
+        print_fail 'runtime.status_read' 'bounded status read failed'
+        return
+    fi
+    status_content=$bounded_result
+    if ! file_byte_count "$status_path"; then
+        incomplete=1
+        status_problem=1
+        print_fail 'runtime.status_read' 'status changed while being checked'
+        return
+    fi
+    if [ "$byte_count_result" -gt "$MAX_STATUS_BYTES" ]; then
+        status_problem=1
+        status_oversized=1
+        print_fail 'runtime.status_read' 'status grew beyond the 16384-byte read limit; content was not interpreted'
+        return
+    fi
+    parse_status_content
+}
+
+check_pid_liveness() {
+    if [ "$status_valid" -ne 1 ]; then
+        print_info 'daemon.pid' 'skipped because no valid bounded status was available'
+        return
+    fi
+    if [ -z "$status_pid" ]; then
+        print_info 'daemon.pid' 'status does not safely supply a PID'
+        return
+    fi
+    if [ "$status_pid" = 0 ]; then
+        pid_problem=1
+        print_fail 'daemon.pid' 'status PID is zero; liveness was not checked'
+        return
+    fi
+    if [ ! -d /proc ] 2>/dev/null; then
+        incomplete=1
+        print_info 'daemon.pid' 'PID is present but /proc is unavailable; no signal was sent'
+        return
+    fi
+    if [ -d "/proc/$status_pid" ] 2>/dev/null; then
+        print_pass 'daemon.pid' "pid=$status_pid is present in /proc (directory check only)"
+    else
+        pid_problem=1
+        print_fail 'daemon.pid' "pid=$status_pid is not present in /proc"
+    fi
+}
+
+next_step() {
+    if [ "$faad_missing" -eq 1 ]; then
+        printf '%s\n' 'NEXT: restore KinAMP/libs_hf from the 3.0 beta archive for armhf, preserve the newer 3.0.0 binaries/launchers, and rerun this read-only check.'
+    elif [ "$status_oversized" -eq 1 ] || [ "$status_malformed" -eq 1 ]; then
+        printf '%s\n' 'NEXT: inspect the KinAMP status publisher and its bounded key=value output; do not use this diagnostic to rewrite the status file.'
+    elif [ "$status_busy" -eq 1 ]; then
+        printf '%s\n' 'NEXT: leave KinAMP stopped/idle, then retry KoReadalong Read along.'
+    elif [ "$fifo_problem" -eq 1 ] || [ "$status_problem" -eq 1 ] || [ "$runtime_problem" -eq 1 ]; then
+        printf '%s\n' 'NEXT: verify KinAMP is manually running with the same KINAMP_RUNTIME_DIR and confirm kinamp_cmd/kinamp_status ownership; this script did not start or change it.'
+    elif [ "$pid_problem" -eq 1 ]; then
+        printf '%s\n' 'NEXT: confirm the status PID belongs to the current KinAMP daemon and manually restart KinAMP through its own installation if needed.'
+    elif [ "$package_problem" -eq 1 ]; then
+        printf '%s\n' 'NEXT: verify the selected KinAMP/KOReader package paths, or rerun with explicit --kinamp-dir/--binary/--koreader-dir options.'
+    elif [ "$incomplete" -eq 1 ]; then
+        printf '%s\n' 'NEXT: rerun on the Kindle with the missing inspection utility or an explicit --ldd path; no unavailable check was inferred as healthy.'
+    elif [ "$package_checks" -eq 0 ]; then
+        printf '%s\n' 'NEXT: runtime checks are ready; rerun with --kinamp-dir PATH to include launcher, binary, library, and package-version checks.'
+    else
+        printf '%s\n' 'NEXT: KinAMP appears idle; retry KoReadalong Read along and attach this report if playback still fails.'
+    fi
+}
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit "$EXIT_OK"
+            ;;
+        -r|--runtime-dir)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            runtime_dir=$2
+            shift 2
+            ;;
+        --runtime-dir=*)
+            runtime_dir=${1#*=}
+            shift
+            ;;
+        --command-fifo|--fifo)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            fifo_path=$2
+            shift 2
+            ;;
+        --command-fifo=*|--fifo=*)
+            fifo_path=${1#*=}
+            shift
+            ;;
+        --status-file|--status)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            status_path=$2
+            shift 2
+            ;;
+        --status-file=*|--status=*)
+            status_path=${1#*=}
+            shift
+            ;;
+        -k|--kinamp-dir)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            kinamp_dir=$2
+            kinamp_dir_given=1
+            package_checks=1
+            shift 2
+            ;;
+        --kinamp-dir=*)
+            kinamp_dir=${1#*=}
+            kinamp_dir_given=1
+            package_checks=1
+            shift
+            ;;
+        -l|--launcher)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            launcher_path=$2
+            check_launcher=1
+            package_checks=1
+            shift 2
+            ;;
+        --launcher=*)
+            launcher_path=${1#*=}
+            check_launcher=1
+            package_checks=1
+            shift
+            ;;
+        -b|--binary)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            binary_path=$2
+            check_binary=1
+            package_checks=1
+            shift 2
+            ;;
+        --binary=*)
+            binary_path=${1#*=}
+            check_binary=1
+            package_checks=1
+            shift
+            ;;
+        --libs-dir)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            libs_dir=$2
+            package_checks=1
+            shift 2
+            ;;
+        --libs-dir=*)
+            libs_dir=${1#*=}
+            package_checks=1
+            shift
+            ;;
+        --koreader-dir)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            koreader_dir=$2
+            package_checks=1
+            shift 2
+            ;;
+        --koreader-dir=*)
+            koreader_dir=${1#*=}
+            package_checks=1
+            shift
+            ;;
+        --koreader-bin)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            koreader_bin=$2
+            package_checks=1
+            shift 2
+            ;;
+        --koreader-bin=*)
+            koreader_bin=${1#*=}
+            package_checks=1
+            shift
+            ;;
+        --kinamp-version-file)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            kinamp_version_file=$2
+            package_checks=1
+            shift 2
+            ;;
+        --kinamp-version-file=*)
+            kinamp_version_file=${1#*=}
+            package_checks=1
+            shift
+            ;;
+        --koreader-version-file)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            koreader_version_file=$2
+            package_checks=1
+            shift 2
+            ;;
+        --koreader-version-file=*)
+            koreader_version_file=${1#*=}
+            package_checks=1
+            shift
+            ;;
+        --ldd)
+            [ "$#" -ge 2 ] || usage_error "$1 requires a path"
+            ldd_override=$2
+            package_checks=1
+            shift 2
+            ;;
+        --ldd=*)
+            ldd_override=${1#*=}
+            package_checks=1
+            shift
+            ;;
+        --skip-dependencies|--no-ldd)
+            skip_dependencies=1
+            shift
+            ;;
+        --)
+            shift
+            [ "$#" -eq 0 ] || usage_error 'positional arguments are not supported'
+            ;;
+        *)
+            usage_error "unknown option: $1"
+            ;;
+    esac
+done
+
+validate_option_path KINAMP_RUNTIME_DIR "$runtime_dir"
+[ -n "$fifo_path" ] || fifo_path=$runtime_dir/kinamp_cmd
+[ -n "$status_path" ] || status_path=$runtime_dir/kinamp_status
+validate_option_path KINAMP_COMMAND_FIFO "$fifo_path"
+validate_option_path KINAMP_STATUS_FILE "$status_path"
+
+if [ "$kinamp_dir_given" -eq 1 ] || [ -n "$kinamp_dir" ]; then
+    package_checks=1
+fi
+if [ "$package_checks" -eq 1 ] && [ -z "$kinamp_dir" ]; then
+    if [ -n "$launcher_path" ]; then
+        path_parent "$launcher_path"
+        kinamp_dir=$parent_result
+    elif [ -n "$binary_path" ]; then
+        path_parent "$binary_path"
+        kinamp_dir=$parent_result
+    fi
+fi
+if [ -n "$kinamp_dir" ]; then
+    validate_option_path KINAMP_DIR "$kinamp_dir"
+fi
+if [ "$kinamp_dir_given" -eq 1 ]; then
+    [ -n "$launcher_path" ] || launcher_path=$kinamp_dir/startkinamp_koreader.sh
+    [ -n "$binary_path" ] || binary_path=$kinamp_dir/KinAMP-minimal
+    check_launcher=1
+    check_binary=1
+fi
+if [ -n "$launcher_path" ]; then
+    validate_option_path KINAMP_LAUNCHER "$launcher_path"
+fi
+if [ -n "$binary_path" ]; then
+    validate_option_path KINAMP_BINARY "$binary_path"
+fi
+if [ -n "$libs_dir" ]; then
+    validate_option_path KINAMP_LIB_DIR "$libs_dir"
+fi
+if [ -n "$koreader_dir" ]; then
+    validate_option_path KOREADER_DIR "$koreader_dir"
+fi
+if [ -n "$koreader_bin" ]; then
+    validate_option_path KOREADER_BIN "$koreader_bin"
+fi
+if [ -n "$kinamp_version_file" ]; then
+    validate_option_path KINAMP_VERSION_FILE "$kinamp_version_file"
+fi
+if [ -n "$koreader_version_file" ]; then
+    validate_option_path KOREADER_VERSION_FILE "$koreader_version_file"
+fi
+if [ -n "$ldd_override" ]; then
+    validate_option_path KINAMP_LDD "$ldd_override"
+fi
+
+STAT_CMD=
+AWK_CMD=
+DD_CMD=
+HEAD_CMD=
+WC_AVAILABLE=0
+printf '%s\n' 'KoReadalong KinAMP diagnostic (read-only)'
+check_optional_tools
+check_architecture
+
+check_runtime_dir
+check_fifo_path "$fifo_path"
+check_status_path "$status_path"
+check_status_content
+check_pid_liveness
+
+dependency_lib_dir=
+binary_safe=0
+if [ "$package_checks" -eq 1 ]; then
+    check_kinamp_evidence
+    if [ "$check_launcher" -eq 1 ] && [ -n "$launcher_path" ]; then
+        check_launcher_path
+    fi
+    if [ "$check_binary" -eq 1 ] && [ -n "$binary_path" ]; then
+        check_binary_path
+    fi
+    check_library_layout
+    check_dependencies
+else
+    print_info 'kinamp.package' 'not selected; no launcher/binary search was performed'
+fi
+check_koreader_evidence
+
+if [ "$runtime_problem" -eq 1 ] || [ "$fifo_problem" -eq 1 ] \
+    || [ "$status_problem" -eq 1 ] || [ "$pid_problem" -eq 1 ] \
+    || [ "$package_problem" -eq 1 ] || [ "$dependency_problem" -eq 1 ] \
+    || [ "$status_busy" -eq 1 ]; then
+    problem=1
+fi
+
+printf '\nSUMMARY: '
+if [ "$problem" -eq 0 ] && [ "$incomplete" -eq 0 ]; then
+    if [ "$status_state" = stopped ] && [ "$status_type_result" != symlink ]; then
+        printf '%s\n' 'READY - selected KinAMP runtime appears idle and its bounded status is usable.'
+    else
+        printf '%s\n' 'READY - no known failure was found in the selected checks.'
+    fi
+elif [ "$problem" -ne 0 ]; then
+    printf '%s\n' 'PROBLEM - one or more checks failed; this script made no changes.'
+else
+    printf '%s\n' 'INCOMPLETE - no known failure was found, but one or more checks were unavailable.'
+fi
+next_step
+
+if [ "$problem" -ne 0 ]; then
+    exit "$EXIT_PROBLEM"
+fi
+if [ "$incomplete" -ne 0 ]; then
+    exit "$EXIT_INCOMPLETE"
+fi
+exit "$EXIT_OK"
