@@ -158,9 +158,13 @@ tests inject process, transport, and timer boundaries. The playback coordinator
 consumes only the high-level adapter contract and owns resource transitions,
 timeline synchronization, and the state exposed to the reader controls.
 
-An adapter error is terminal for the current document session: the playback
-panel disables its transport actions and reports that the document must be
-reopened to retry. Resource replacement and final EOF first wait for the
+An adapter error is terminal for the current document session once adapter
+resource ownership is uncertain: the playback panel disables its transport
+actions and reports that the document must be reopened to retry. The Kindle
+adapter marks failures before playlist creation or playback-command delivery
+as recoverable; the coordinator stops that unclaimed adapter session, removes
+the materialized file, reports the error, and returns to idle so **Start** can
+be pressed again. Resource replacement and final EOF first wait for the
 adapter's idle acknowledgement before removing the private extracted file.
 
 The Kindle adapter is `kindleaudio.lua`, backed by the narrow

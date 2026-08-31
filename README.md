@@ -54,7 +54,11 @@ KinAMP's command FIFO and status file are
 `${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_cmd` and
 `${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_status`. If `KINAMP_RUNTIME_DIR` is unset,
 both default to `/tmp`. A missing or busy KinAMP daemon produces a clear
-playback error. KoReadalong does not launch, kill, or quit KinAMP.
+playback error. If this is detected before KoReadalong creates a playlist or
+delivers a playback command, correct the condition and press **Start** again
+without reopening the EPUB. Once resource ownership is uncertain, playback
+remains terminal for that document. KoReadalong does not launch, kill, or quit
+KinAMP.
 
 ### Tested configuration
 
