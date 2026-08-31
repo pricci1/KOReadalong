@@ -13,6 +13,30 @@ local InfoMessage = require("ui/widget/infomessage")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
 
+local KINAMP_MISSING_ERROR = "KinAMP daemon is not running; start KinAMP first"
+local KINAMP_BUSY_ERROR = "KinAMP is busy"
+
+local KINAMP_STARTUP_HELP = _([[KinAMP isn’t running.
+
+Open Tools → KinAMP Player, start it, then choose Stop playback so the daemon remains running and idle. Return to the still-open EPUB and press Start again.
+
+KoReadalong uses KinAMP for Kindle audio but does not manage KinAMP itself.]])
+
+local KINAMP_BUSY_HELP = _([[KinAMP is busy.
+
+Stop the current KinAMP playback or other client, leave KinAMP idle, and press Start again.]])
+
+local KINAMP_HELP = _([[KinAMP setup and help
+
+KinAMP is the official KOReader plugin for Kindle audio. It owns installation, daemon lifecycle, Bluetooth, playlists, and management.
+
+Open Tools → KinAMP Player to manage KinAMP. For KoReadalong, start the player and choose Stop playback so the daemon remains running and idle before pressing Start in Read along.
+
+KoReadalong owns only its temporary read-along playlist and session. It never launches, kills, quits, or otherwise manages the KinAMP daemon.
+
+Official KinAMP documentation:
+https://github.com/kbarni/KinAMP/blob/master/README.md]])
+
 local KoReadalong = WidgetContainer:extend({
     name = "koreadalong",
     is_doc_only = true,
@@ -74,8 +98,28 @@ local function new_audio_adapter()
 end
 
 function KoReadalong:_show_error(error_message)
+    local message = tostring(error_message)
+    if Device:isKindle() then
+        if message == KINAMP_MISSING_ERROR then
+            UIManager:show(InfoMessage:new{
+                text = KINAMP_STARTUP_HELP,
+            })
+            return
+        elseif message == KINAMP_BUSY_ERROR then
+            UIManager:show(InfoMessage:new{
+                text = KINAMP_BUSY_HELP,
+            })
+            return
+        end
+    end
     UIManager:show(InfoMessage:new{
-        text = _("Read along: ") .. tostring(error_message),
+        text = _("Read along: ") .. message,
+    })
+end
+
+function KoReadalong:_show_kinamp_help()
+    UIManager:show(InfoMessage:new{
+        text = KINAMP_HELP,
     })
 end
 
@@ -232,6 +276,15 @@ function KoReadalong:addToMainMenu(menu_items)
             self:_show_playback_controls()
         end,
     }
+    if Device:isKindle() then
+        menu_items.kinamp_help = {
+            text = _("KinAMP setup and help"),
+            sorting_hint = "more_tools",
+            callback = function()
+                self:_show_kinamp_help()
+            end,
+        }
+    end
 end
 
 function KoReadalong:onPageUpdate()
