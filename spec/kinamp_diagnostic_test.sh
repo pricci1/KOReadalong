@@ -101,6 +101,29 @@ make_missing_faad_ldd() {
     chmod 755 "$fixture/ldd"
 }
 
+make_nonzero_ldd() {
+    fixture=$1
+    printf '%s\n' '#!/bin/sh' \
+        "printf '%s\\n' 'ldd: invalid ELF header' >&2" \
+        'exit 1' \
+        > "$fixture/ldd"
+    chmod 755 "$fixture/ldd"
+}
+
+make_oversized_ldd() {
+    fixture=$1
+    {
+        printf '%s\n' '#!/bin/sh'
+        printf '%s\n' 'index=0'
+        printf '%s\n' "while [ \"\$index\" -lt 9000 ]; do"
+        printf '%s\n' '    printf x'
+        printf '%s\n' "    index=\$((index + 1))"
+        printf '%s\n' 'done'
+        printf '%s\n' 'exit 0'
+    } > "$fixture/ldd"
+    chmod 755 "$fixture/ldd"
+}
+
 test_help_and_validation() {
     run_capture "$diagnostic" --help
     assert_status 0
@@ -194,6 +217,39 @@ test_missing_library() {
     assert_not_contains '/very/private/' "$run_output"
 }
 
+test_nonzero_and_truncated_ldd() {
+    fixture=$test_root/nonzero-ldd
+    make_runtime "$fixture"
+    write_idle_status "$fixture"
+    make_package "$fixture"
+    make_nonzero_ldd "$fixture"
+
+    run_capture "$diagnostic" \
+        --runtime-dir "$fixture/runtime" \
+        --kinamp-dir "$fixture/KinAMP" \
+        --ldd "$fixture/ldd"
+    assert_status 3
+    assert_contains 'CHECK kinamp.dependencies: INFO - ldd exited with status=1; dependency check is inconclusive' "$run_output"
+    assert_contains 'SUMMARY: INCOMPLETE' "$run_output"
+    assert_not_contains 'CHECK kinamp.dependencies: PASS' "$run_output"
+    assert_not_contains 'invalid ELF header' "$run_output"
+
+    fixture=$test_root/truncated-ldd
+    make_runtime "$fixture"
+    write_idle_status "$fixture"
+    make_package "$fixture"
+    make_oversized_ldd "$fixture"
+
+    run_capture "$diagnostic" \
+        --runtime-dir "$fixture/runtime" \
+        --kinamp-dir "$fixture/KinAMP" \
+        --ldd "$fixture/ldd"
+    assert_status 3
+    assert_contains 'CHECK kinamp.dependencies: INFO - bounded ldd output is missing or has an invalid trailing status sentinel' "$run_output"
+    assert_contains 'SUMMARY: INCOMPLETE' "$run_output"
+    assert_not_contains 'CHECK kinamp.dependencies: PASS' "$run_output"
+}
+
 test_pw2_binary_selection() {
     fixture=$test_root/pw2
     make_runtime "$fixture"
@@ -278,6 +334,7 @@ test_healthy_idle
 test_missing_runtime_files
 test_malformed_and_oversized_status
 test_missing_library
+test_nonzero_and_truncated_ldd
 test_pw2_binary_selection
 test_missing_optional_tools
 test_read_only_behavior

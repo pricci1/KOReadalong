@@ -13,6 +13,7 @@ MAX_STATUS_BYTES=16384
 MAX_STATUS_LINES=64
 MAX_VERSION_BYTES=256
 MAX_LDD_BYTES=8192
+LDD_SENTINEL="__KOREADALONG_LDD_STATUS_$$_v1__="
 
 EXIT_OK=0
 EXIT_USAGE=1
@@ -39,6 +40,7 @@ check_launcher=0
 check_binary=0
 binary_default=0
 skip_dependencies=0
+dependency_incomplete=0
 
 runtime_dir=${KINAMP_RUNTIME_DIR-}
 [ -n "$runtime_dir" ] || runtime_dir=/tmp
@@ -124,7 +126,9 @@ runtime directory; FIFO/status presence and type; a status PID without signaling
 sanitized state/index/position/duration/media fields; package files;
 and missing dynamic libraries such as libfaad.so.2 when a safe binary path
 and ldd helper are available. Status/media reads are capped at 16384 bytes
-and 64 lines. Media and playlist values are basename-only and sanitized.
+and 64 lines. Ldd output is capped at 8192 bytes and its helper exit status
+is carried by a private trailing sentinel. Media and playlist values are
+basename-only and sanitized.
 
 Exit status:
   0   Checks completed without a known problem or limitation.
@@ -752,7 +756,7 @@ parse_dependency_output() {
     dependency_parse_status=1
     if [ -n "$AWK_CMD" ]; then
         dependency_parse_output=$(
-            printf '%s\n' "$ldd_output" |
+            printf '%s\n' "$dependency_payload" |
                 "$AWK_CMD" '
                     function clean_name(value) {
                         sub(/:.*/, "", value)
@@ -779,6 +783,67 @@ parse_dependency_output() {
         )
         dependency_parse_status=$?
     fi
+}
+
+parse_dependency_sentinel() {
+    dependency_helper_status=
+    dependency_payload=
+    dependency_sentinel_status=1
+    if [ -z "$AWK_CMD" ]; then
+        return
+    fi
+
+    dependency_helper_status=$(
+        printf '%s\n' "$ldd_output" |
+            "$AWK_CMD" -v marker="$LDD_SENTINEL" '
+                {
+                    if (index($0, marker) == 1) {
+                        candidate=substr($0, length(marker) + 1)
+                        if (candidate !~ /^[0-9]+$/ || length(candidate) > 3) {
+                            invalid=1
+                        }
+                        count++
+                        status=candidate
+                        line=NR
+                    }
+                }
+                END {
+                    if (invalid || count != 1 || line != NR || status == "") exit 1
+                    print status
+                }
+            '
+    )
+    dependency_sentinel_status=$?
+    if [ "$dependency_sentinel_status" -ne 0 ]; then
+        return
+    fi
+
+    dependency_payload=$(
+        printf '%s\n' "$ldd_output" |
+            "$AWK_CMD" -v marker="$LDD_SENTINEL" '
+                {
+                    if (index($0, marker) == 1) {
+                        candidate=substr($0, length(marker) + 1)
+                        if (candidate !~ /^[0-9]+$/ || length(candidate) > 3) {
+                            invalid=1
+                        }
+                        count++
+                        line=NR
+                        next
+                    }
+                    print
+                }
+                END {
+                    if (invalid || count != 1 || line != NR) exit 1
+                }
+            '
+    )
+    dependency_payload_status=$?
+    if [ "$dependency_payload_status" -ne 0 ]; then
+        dependency_sentinel_status=1
+        return
+    fi
+    dependency_sentinel_status=0
 }
 
 check_dependencies() {
@@ -828,25 +893,37 @@ check_dependencies() {
     if [ -n "$HEAD_CMD" ]; then
         if [ -n "$dependency_lib_dir" ]; then
             ldd_output=$(
-                LD_LIBRARY_PATH="$dependency_lib_dir" "$LDD_CMD" "$binary_path" 2>&1 |
-                    "$HEAD_CMD" -c "$MAX_LDD_BYTES"
+                {
+                    LD_LIBRARY_PATH="$dependency_lib_dir" "$LDD_CMD" "$binary_path" 2>&1
+                    ldd_status=$?
+                    printf '\n%s%s\n' "$LDD_SENTINEL" "$ldd_status"
+                } | "$HEAD_CMD" -c "$MAX_LDD_BYTES"
             )
         else
             ldd_output=$(
-                "$LDD_CMD" "$binary_path" 2>&1 |
-                    "$HEAD_CMD" -c "$MAX_LDD_BYTES"
+                {
+                    "$LDD_CMD" "$binary_path" 2>&1
+                    ldd_status=$?
+                    printf '\n%s%s\n' "$LDD_SENTINEL" "$ldd_status"
+                } | "$HEAD_CMD" -c "$MAX_LDD_BYTES"
             )
         fi
     else
         if [ -n "$dependency_lib_dir" ]; then
             ldd_output=$(
-                LD_LIBRARY_PATH="$dependency_lib_dir" "$LDD_CMD" "$binary_path" 2>&1 |
-                    "$DD_CMD" bs="$MAX_LDD_BYTES" count=1 2>/dev/null
+                {
+                    LD_LIBRARY_PATH="$dependency_lib_dir" "$LDD_CMD" "$binary_path" 2>&1
+                    ldd_status=$?
+                    printf '\n%s%s\n' "$LDD_SENTINEL" "$ldd_status"
+                } | "$DD_CMD" bs="$MAX_LDD_BYTES" count=1 2>/dev/null
             )
         else
             ldd_output=$(
-                "$LDD_CMD" "$binary_path" 2>&1 |
-                    "$DD_CMD" bs="$MAX_LDD_BYTES" count=1 2>/dev/null
+                {
+                    "$LDD_CMD" "$binary_path" 2>&1
+                    ldd_status=$?
+                    printf '\n%s%s\n' "$LDD_SENTINEL" "$ldd_status"
+                } | "$DD_CMD" bs="$MAX_LDD_BYTES" count=1 2>/dev/null
             )
         fi
     fi
@@ -854,6 +931,27 @@ check_dependencies() {
     if [ -z "$ldd_output" ]; then
         incomplete=1
         print_info 'kinamp.dependencies' 'ldd produced no bounded output; dependency check is inconclusive'
+        return
+    fi
+    parse_dependency_sentinel
+    if [ "$dependency_sentinel_status" -ne 0 ]; then
+        incomplete=1
+        dependency_incomplete=1
+        print_info 'kinamp.dependencies' 'bounded ldd output is missing or has an invalid trailing status sentinel'
+        return
+    fi
+    case "$dependency_helper_status" in
+        ''|*[!0-9]*)
+            incomplete=1
+            dependency_incomplete=1
+            print_info 'kinamp.dependencies' 'ldd helper status is invalid; dependency check is inconclusive'
+            return
+            ;;
+    esac
+    if [ "$dependency_helper_status" -ne 0 ]; then
+        incomplete=1
+        dependency_incomplete=1
+        print_info 'kinamp.dependencies' "ldd exited with status=$dependency_helper_status; dependency check is inconclusive"
         return
     fi
     parse_dependency_output
@@ -1150,6 +1248,8 @@ next_step() {
         printf '%s\n' 'NEXT: confirm the status PID belongs to the current KinAMP daemon and manually restart KinAMP through its own installation if needed.'
     elif [ "$package_problem" -eq 1 ]; then
         printf '%s\n' 'NEXT: verify the selected KinAMP/KOReader package paths, or rerun with explicit --kinamp-dir/--binary/--koreader-dir options.'
+    elif [ "$dependency_incomplete" -eq 1 ]; then
+        printf '%s\n' 'NEXT: verify the selected binary, architecture, loader, and ldd helper; rerun after the helper returns a bounded complete report.'
     elif [ "$incomplete" -eq 1 ]; then
         printf '%s\n' 'NEXT: rerun on the Kindle with the missing inspection utility or an explicit --ldd path; no unavailable check was inferred as healthy.'
     elif [ "$package_checks" -eq 0 ]; then
