@@ -1,4 +1,5 @@
-.PHONY: check lint run run-headless syntax test mpv-integration smoke-integration
+.PHONY: check lint run run-headless syntax test mpv-integration \
+	kinamp-integration smoke-integration
 
 LUA_FILES := $(shell find koreadalong.koplugin spec -type f -name '*.lua' 2>/dev/null)
 
@@ -15,6 +16,9 @@ test:
 
 mpv-integration:
 	KOREADER_MPV_INTEGRATION=1 LUA_PATH='./koreadalong.koplugin/?.lua;.cache/koreader/lib/koreader/?.lua;.cache/koreader/lib/koreader/common/?.lua;/usr/share/lua/5.1/?.lua;/usr/share/lua/5.1/?/init.lua;;' LUA_CPATH='./.cache/koreader/lib/koreader/common/?.so;/usr/lib/x86_64-linux-gnu/lua/5.1/?.so;;' .cache/koreader/lib/koreader/luajit /usr/bin/busted --verbose spec/mpv_integration_spec.lua
+
+kinamp-integration:
+	LUA_PATH='./koreadalong.koplugin/?.lua;.cache/koreader/lib/koreader/?.lua;.cache/koreader/lib/koreader/common/?.lua;/usr/share/lua/5.1/?.lua;/usr/share/lua/5.1/?/init.lua;;' LUA_CPATH='./.cache/koreader/lib/koreader/common/?.so;./.cache/koreader/lib/koreader/?.so;/usr/lib/x86_64-linux-gnu/lua/5.1/?.so;;' .cache/koreader/lib/koreader/luajit /usr/bin/busted --verbose spec/kinamp_integration_spec.lua
 
 smoke-integration:
 	./scripts/run-smoke
