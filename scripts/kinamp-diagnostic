@@ -37,6 +37,7 @@ faad_missing=0
 package_checks=0
 check_launcher=0
 check_binary=0
+binary_default=0
 skip_dependencies=0
 
 runtime_dir=${KINAMP_RUNTIME_DIR-}
@@ -95,6 +96,8 @@ KinAMP package options:
   -l, --launcher PATH         Launcher to check, without executing it.
   -b, --binary PATH           KinAMP binary to check and, unless skipped,
                               inspect with ldd (the binary is not executed).
+                              A PW2 architecture selects KinAMP-minimal-pw2
+                              when this is omitted.
       --libs-dir DIR          Library directory to use for the ldd check.
       --kinamp-version-file PATH
                               Explicit bounded KinAMP version evidence file.
@@ -131,7 +134,7 @@ Exit status:
       /proc, ldd, or a required inspection utility is unavailable).
 
 Examples:
-  $PROGRAM --runtime-dir /tmp --kinamp-dir /mnt/us/extensions/KinAMP
+  $PROGRAM --runtime-dir /tmp --kinamp-dir /mnt/us/KinAMP
   $PROGRAM --status-file /tmp/kinamp_status --binary ./KinAMP-minimal
 EOF
 }
@@ -428,7 +431,11 @@ check_optional_tools() {
 }
 
 check_architecture() {
-    architecture=$(uname -m 2>/dev/null) || architecture=
+    if command_available uname; then
+        architecture=$(uname -m 2>/dev/null) || architecture=
+    else
+        architecture=
+    fi
     if [ -z "$architecture" ]; then
         incomplete=1
         print_info 'machine.architecture' 'uname -m unavailable'
@@ -672,6 +679,13 @@ check_launcher_path() {
 }
 
 check_binary_path() {
+    if [ "$binary_default" -eq 1 ]; then
+        case "$architecture" in
+            armv5*|armv6*)
+                binary_path=$kinamp_dir/KinAMP-minimal-pw2
+                ;;
+        esac
+    fi
     display_path "$binary_path"
     path_type "$binary_path"
     binary_safe=0
@@ -1320,7 +1334,10 @@ if [ -n "$kinamp_dir" ]; then
 fi
 if [ "$kinamp_dir_given" -eq 1 ]; then
     [ -n "$launcher_path" ] || launcher_path=$kinamp_dir/startkinamp_koreader.sh
-    [ -n "$binary_path" ] || binary_path=$kinamp_dir/KinAMP-minimal
+    if [ -z "$binary_path" ]; then
+        binary_path=$kinamp_dir/KinAMP-minimal
+        binary_default=1
+    fi
     check_launcher=1
     check_binary=1
 fi

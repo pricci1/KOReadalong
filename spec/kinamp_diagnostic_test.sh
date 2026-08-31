@@ -194,6 +194,33 @@ test_missing_library() {
     assert_not_contains '/very/private/' "$run_output"
 }
 
+test_pw2_binary_selection() {
+    fixture=$test_root/pw2
+    make_runtime "$fixture"
+    write_idle_status "$fixture"
+    mkdir -p "$fixture/KinAMP" "$fixture/libs"
+    printf '%s\n' '#!/bin/sh' > "$fixture/KinAMP/startkinamp_koreader.sh"
+    printf '%s\n' '#!/bin/sh' > "$fixture/KinAMP/KinAMP-minimal-pw2"
+    printf '%s\n' '3.0.0' > "$fixture/KinAMP/VERSION"
+    chmod 755 "$fixture/KinAMP/startkinamp_koreader.sh" \
+        "$fixture/KinAMP/KinAMP-minimal-pw2"
+    make_clean_ldd "$fixture"
+    tools=$fixture/tools
+    mkdir -p "$tools"
+    printf '%s\n' '#!/bin/sh' 'printf "%s\\n" armv5tel' > "$tools/uname"
+    chmod 755 "$tools/uname"
+
+    run_status=0
+    run_output=$(PATH="$tools:$PATH" "$diagnostic" \
+        --runtime-dir "$fixture/runtime" \
+        --kinamp-dir "$fixture/KinAMP" \
+        --libs-dir "$fixture/libs" \
+        --ldd "$fixture/ldd" 2>&1) || run_status=$?
+    assert_status 0
+    assert_contains "KinAMP-minimal-pw2" "$run_output"
+    assert_not_contains 'KinAMP-minimal: FAIL - missing' "$run_output"
+}
+
 test_missing_optional_tools() {
     fixture=$test_root/missing-tools
     make_runtime "$fixture"
@@ -251,6 +278,7 @@ test_healthy_idle
 test_missing_runtime_files
 test_malformed_and_oversized_status
 test_missing_library
+test_pw2_binary_selection
 test_missing_optional_tools
 test_read_only_behavior
 
