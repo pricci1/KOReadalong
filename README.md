@@ -53,7 +53,8 @@ steps 4–6 avoids that shutdown: keep the document open while using Read along.
 KinAMP's command FIFO and status file are
 `${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_cmd` and
 `${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_status`. If `KINAMP_RUNTIME_DIR` is unset,
-both default to `/tmp`. KoReadalong does not launch, kill, or quit KinAMP.
+both default to `/tmp`. A missing or busy KinAMP daemon produces a clear
+playback error. KoReadalong does not launch, kill, or quit KinAMP.
 
 ### Tested configuration
 
@@ -77,12 +78,18 @@ handoff, stop/restart, and document-close cleanup.
 
 ### Workarounds and limitations
 
-- KinAMP timing is whole-second only; fractional positions are not reported.
-- Only one KinAMP client is supported at a time.
-- An external stop and natural EOF are indistinguishable to KoReadalong.
-- The KinAMP daemon must be running before playback starts, and its initial
-  state must be idle/stopped. KoReadalong does not manage the daemon or
-  Bluetooth.
+- **Resume workaround:** KinAMP 3.0.0 can rewind its synthetic clock when
+  `play` resumes; KoReadalong uses a whole-second `seek` to the last published
+  paused position instead.
+- **Timing:** KinAMP publishes whole seconds and rounds seeks to the nearest
+  second; fractional positions are not reported.
+- **Clients:** Only one KinAMP client is supported at a time.
+- **Stop versus EOF:** An external stop and natural EOF are indistinguishable
+  to KoReadalong.
+- **Daemon ownership:** KinAMP must be running and idle/stopped before playback
+  starts. KoReadalong does not manage the daemon or Bluetooth.
+- **Controls:** **Hide** leaves playback running; use **Stop** to stop narration
+  and reset playback to the first clip.
 
 ## Use
 
