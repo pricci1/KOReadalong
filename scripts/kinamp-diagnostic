@@ -60,6 +60,8 @@ koreader_bin=${KOREADER_BIN-}
 kinamp_version_file=${KINAMP_VERSION_FILE-}
 koreader_version_file=${KOREADER_VERSION_FILE-}
 ldd_override=${KINAMP_LDD-}
+proc_dir=${KINAMP_PROC_DIR-}
+[ -n "$proc_dir" ] || proc_dir=/proc
 
 [ -n "$launcher_path" ] && check_launcher=1
 [ -n "$binary_path" ] && check_binary=1
@@ -112,7 +114,7 @@ Environment overrides:
   KINAMP_RUNTIME_DIR KINAMP_COMMAND_FIFO KINAMP_STATUS_FILE
   KINAMP_DIR (or KINAMP_ROOT) KINAMP_LAUNCHER KINAMP_BINARY KINAMP_LIB_DIR
   KINAMP_VERSION_FILE KINAMP_LDD
-  KOREADER_DIR KOREADER_BIN KOREADER_VERSION_FILE
+  KINAMP_PROC_DIR KOREADER_DIR KOREADER_BIN KOREADER_VERSION_FILE
 
 The report checks architecture; bounded version evidence; the selected
 runtime directory; FIFO/status presence and type; a status PID without signaling;
@@ -241,11 +243,42 @@ basename_safe() {
     [ -n "$basename_result" ] || basename_result='(none)'
 }
 
-file_byte_count() {
-    byte_count_result=$(wc -c < "$1" 2>/dev/null) || {
-        byte_count_result=
+bounded_file_size() {
+    size_path=$1
+    size_limit=$2
+    byte_count_result=
+
+    if [ -n "$STAT_CMD" ]; then
+        byte_count_result=$(
+            "$STAT_CMD" -c '%s' "$size_path" 2>/dev/null
+        ) || byte_count_result=
+        byte_count_result=$(printf '%s' "$byte_count_result" | tr -d '[:space:]')
+        case "$byte_count_result" in
+            ''|*[!0-9]*)
+                byte_count_result=
+                ;;
+            *)
+                return 0
+                ;;
+        esac
+    fi
+
+    if [ "$WC_AVAILABLE" -ne 1 ]; then
         return 1
-    }
+    fi
+    if [ -n "$DD_CMD" ]; then
+        byte_count_result=$(
+            "$DD_CMD" if="$size_path" bs=$((size_limit + 1)) count=1 2>/dev/null |
+                wc -c
+        )
+    elif [ -n "$HEAD_CMD" ]; then
+        byte_count_result=$(
+            "$HEAD_CMD" -c $((size_limit + 1)) "$size_path" 2>/dev/null |
+                wc -c
+        )
+    else
+        return 1
+    fi
     byte_count_result=$(printf '%s' "$byte_count_result" | tr -d '[:space:]')
     case "$byte_count_result" in
         ''|*[!0-9]*)
@@ -447,7 +480,7 @@ check_version_file() {
             ;;
     esac
 
-    if ! file_byte_count "$version_file_path"; then
+    if ! bounded_file_size "$version_file_path" "$MAX_VERSION_BYTES"; then
         incomplete=1
         print_info "version.$version_label" 'unable to measure bounded version evidence'
         return
@@ -480,6 +513,12 @@ check_version_file() {
                     }
                 '
         )
+        version_parse_status=$?
+        if [ "$version_parse_status" -ne 0 ]; then
+            incomplete=1
+            print_info "version.$version_label" 'version evidence interpreter failed'
+            return
+        fi
     else
         incomplete=1
         print_info "version.$version_label" 'awk unavailable; evidence was not displayed'
@@ -696,6 +735,7 @@ check_library_layout() {
 
 parse_dependency_output() {
     dependency_parse_output=
+    dependency_parse_status=1
     if [ -n "$AWK_CMD" ]; then
         dependency_parse_output=$(
             printf '%s\n' "$ldd_output" |
@@ -723,6 +763,7 @@ parse_dependency_output() {
                     END { print "missing_count=" count + 0 }
                 '
         )
+        dependency_parse_status=$?
     fi
 }
 
@@ -802,6 +843,11 @@ check_dependencies() {
         return
     fi
     parse_dependency_output
+    if [ "$dependency_parse_status" -ne 0 ]; then
+        incomplete=1
+        print_info 'kinamp.dependencies' 'bounded ldd interpreter failed'
+        return
+    fi
     missing_count=0
     missing_names=
     while IFS= read -r dependency_line; do
@@ -836,8 +882,7 @@ parse_status_content() {
     status_parse_output=
     if [ -z "$AWK_CMD" ]; then
         incomplete=1
-        status_problem=1
-        print_fail 'runtime.status_fields' 'awk is unavailable; bounded status was not interpreted'
+        print_info 'runtime.status_fields' 'awk is unavailable; bounded status was not interpreted'
         return 1
     fi
     status_parse_output=$(
@@ -934,6 +979,12 @@ parse_status_content() {
                 }
             '
     )
+    status_parse_status=$?
+    if [ "$status_parse_status" -ne 0 ]; then
+        incomplete=1
+        print_info 'runtime.status_fields' 'bounded status interpreter failed'
+        return 1
+    fi
     status_state=
     status_pid=
     status_mode=
@@ -1013,16 +1064,9 @@ check_status_content() {
         print_info 'runtime.status_read' 'skipped because status path is not a safe regular file'
         return
     fi
-    if [ "$WC_AVAILABLE" -ne 1 ]; then
+    if ! bounded_file_size "$status_path" "$MAX_STATUS_BYTES"; then
         incomplete=1
-        status_problem=1
-        print_fail 'runtime.status_read' 'wc is unavailable; bounded byte check was not possible'
-        return
-    fi
-    if ! file_byte_count "$status_path"; then
-        incomplete=1
-        status_problem=1
-        print_fail 'runtime.status_read' 'unable to measure status file safely'
+        print_info 'runtime.status_read' 'unable to measure status size with available tools'
         return
     fi
     if [ "$byte_count_result" -gt "$MAX_STATUS_BYTES" ]; then
@@ -1034,15 +1078,13 @@ check_status_content() {
     read_bounded_file "$status_path" $((MAX_STATUS_BYTES + 1))
     if [ "$bounded_status" -ne 0 ]; then
         incomplete=1
-        status_problem=1
-        print_fail 'runtime.status_read' 'bounded status read failed'
+        print_info 'runtime.status_read' 'bounded status read failed'
         return
     fi
     status_content=$bounded_result
-    if ! file_byte_count "$status_path"; then
+    if ! bounded_file_size "$status_path" "$MAX_STATUS_BYTES"; then
         incomplete=1
-        status_problem=1
-        print_fail 'runtime.status_read' 'status changed while being checked'
+        print_info 'runtime.status_read' 'status changed while being checked'
         return
     fi
     if [ "$byte_count_result" -gt "$MAX_STATUS_BYTES" ]; then
@@ -1068,16 +1110,16 @@ check_pid_liveness() {
         print_fail 'daemon.pid' 'status PID is zero; liveness was not checked'
         return
     fi
-    if [ ! -d /proc ] 2>/dev/null; then
+    if [ ! -d "$proc_dir" ] 2>/dev/null; then
         incomplete=1
-        print_info 'daemon.pid' 'PID is present but /proc is unavailable; no signal was sent'
+        print_info 'daemon.pid' 'PID is present but procfs is unavailable; no signal was sent'
         return
     fi
-    if [ -d "/proc/$status_pid" ] 2>/dev/null; then
-        print_pass 'daemon.pid' "pid=$status_pid is present in /proc (directory check only)"
+    if [ -d "$proc_dir/$status_pid" ] 2>/dev/null; then
+        print_pass 'daemon.pid' "pid=$status_pid is present in procfs (directory check only)"
     else
         pid_problem=1
-        print_fail 'daemon.pid' "pid=$status_pid is not present in /proc"
+        print_fail 'daemon.pid' "pid=$status_pid is not present in procfs"
     fi
 }
 
@@ -1306,6 +1348,7 @@ fi
 if [ -n "$ldd_override" ]; then
     validate_option_path KINAMP_LDD "$ldd_override"
 fi
+validate_option_path KINAMP_PROC_DIR "$proc_dir"
 
 STAT_CMD=
 AWK_CMD=

@@ -201,17 +201,19 @@ test_missing_optional_tools() {
     make_package "$fixture"
     tools=$fixture/tools
     mkdir -p "$tools"
-    for tool in awk dd head stat tr wc uname; do
+    for tool in awk dd head tr wc uname; do
         tool_path=$(command -v "$tool") || fail "missing host tool: $tool"
         ln -s "$tool_path" "$tools/$tool"
     done
 
     run_status=0
-    run_output=$(PATH="$tools" "$diagnostic" \
+    run_output=$(KINAMP_PROC_DIR="$fixture/no-proc" PATH="$tools" "$diagnostic" \
         --runtime-dir "$fixture/runtime" \
         --kinamp-dir "$fixture/KinAMP" 2>&1) || run_status=$?
     assert_status 3
+    assert_contains 'CHECK tool.stat: INFO - unavailable' "$run_output"
     assert_contains 'CHECK tool.readlink: INFO - unavailable' "$run_output"
+    assert_contains 'CHECK daemon.pid: INFO - PID is present but procfs is unavailable' "$run_output"
     assert_contains 'CHECK kinamp.dependencies: INFO - ldd is unavailable' "$run_output"
     assert_contains 'SUMMARY: INCOMPLETE' "$run_output"
 }
