@@ -115,8 +115,8 @@ Environment overrides:
   KOREADER_DIR KOREADER_BIN KOREADER_VERSION_FILE
 
 The report checks architecture; bounded version evidence; the selected
-runtime directory; FIFO/status presence and type; a status PID without using
-kill; sanitized state/index/position/duration/media fields; package files;
+runtime directory; FIFO/status presence and type; a status PID without signaling;
+sanitized state/index/position/duration/media fields; package files;
 and missing dynamic libraries such as libfaad.so.2 when a safe binary path
 and ldd helper are available. Status/media reads are capped at 16384 bytes
 and 64 lines. Media and playlist values are basename-only and sanitized.
