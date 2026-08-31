@@ -69,6 +69,21 @@ handoff, stop/restart, and document-close cleanup.
 
 ### Troubleshooting
 
+From a KoReadalong checkout copied to the Kindle, run the read-only diagnostic
+over SSH before changing the installation:
+
+```sh
+sh scripts/kinamp-diagnostic \
+    --runtime-dir "${KINAMP_RUNTIME_DIR:-/tmp}" \
+    --kinamp-dir /path/to/KinAMP
+```
+
+It never opens the command FIFO, starts or signals KinAMP, or changes runtime
+files. Exit status 0 means the selected checks passed, 2 identifies a known
+problem, and 3 means a check was unavailable or inconclusive. Its report
+sanitizes media paths and is suitable for attaching to a bug report. Use
+`sh scripts/kinamp-diagnostic --help` for path overrides and all checks.
+
 | Symptom | Check | Remedy |
 | --- | --- | --- |
 | KinAMP's launcher reports `libfaad.so.2 => not found` | From the KinAMP directory, run `LD_LIBRARY_PATH=libs_hf ldd ./KinAMP-minimal`. Check the extracted package for `KinAMP/libs_hf` and `KinAMP/libs_pw2`. | The KinAMP 3.0.0 `kinamp.zip` tested on August 28, 2026 omitted both library directories required by its launchers. On an armhf Kindle, copy `KinAMP/libs_hf` from the 3.0 beta archive when this diagnostic reports the missing library. Preserve the newer 3.0.0 binaries and launchers. |
