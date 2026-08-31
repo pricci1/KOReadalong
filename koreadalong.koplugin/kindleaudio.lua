@@ -8,6 +8,28 @@ local C = ffi.C
 local KindleAudio = {}
 KindleAudio.__index = KindleAudio
 
+local function load_logger()
+    local ok, logger = pcall(require, "logger")
+    return ok and logger or nil
+end
+
+local function redact_path(value)
+    if type(value) ~= "string" then
+        return tostring(value)
+    end
+    return (value:gsub("/[^%s,;:%)]*", "<path>"))
+end
+
+local function safe_command_argument(name, value)
+    if name == "load" then
+        return "<playlist>"
+    end
+    if type(value) == "number" then
+        return value
+    end
+    return "<redacted>"
+end
+
 KindleAudio.STATES = {
     IDLE = "idle",
     LOADING = "loading",
@@ -222,6 +244,7 @@ function KindleAudio.new(options)
 
     local self = setmetatable({
         port = port,
+        logger = options.logger or load_logger(),
         timer = options.timer or require("ui/uimanager"),
         clock = options.clock or function()
             local time = require("ui/time")
@@ -258,6 +281,10 @@ function KindleAudio.new(options)
         resource_seen = false,
         last_snapshot = nil,
         last_daemon_state = nil,
+        last_logged_token = nil,
+        last_logged_error = nil,
+        last_logged_error_terminal = nil,
+        last_logged_cleanup_error = nil,
         stop_requested = false,
         stop_sent = false,
         stop_baseline = nil,
@@ -276,7 +303,81 @@ function KindleAudio.new(options)
     return self
 end
 
+function KindleAudio:_log(level, ...)
+    local method = self.logger and self.logger[level]
+    if type(method) == "function" then
+        pcall(method, ...)
+    end
+end
+
+function KindleAudio:_log_commands(commands)
+    local list = type(commands[1]) == "table" and commands or { commands }
+    for _, command in ipairs(list) do
+        local name = command[1]
+        local arguments = {}
+        for index = 2, #command do
+            arguments[#arguments + 1] = tostring(
+                safe_command_argument(name, command[index])
+            )
+        end
+        if #arguments == 0 then
+            self:_log("info", "KoReadalong KindleAudio command", name)
+        else
+            self:_log(
+                "info",
+                "KoReadalong KindleAudio command",
+                name,
+                table.concat(arguments, " ")
+            )
+        end
+    end
+end
+
+function KindleAudio:_log_publication(token)
+    if token == nil or same_token(self.last_logged_token, token) then
+        return
+    end
+    self:_log(
+        "info",
+        "KoReadalong KindleAudio publication",
+        self.last_logged_token and "changed" or "initial",
+        tostring(token)
+    )
+    self.last_logged_token = token
+end
+
+function KindleAudio:_log_failure(message, terminal)
+    message = tostring(message or "unknown KinAMP error")
+    terminal = terminal == true
+    if self.last_logged_error == message
+        and self.last_logged_error_terminal == terminal then
+        return
+    end
+    self.last_logged_error = message
+    self.last_logged_error_terminal = terminal
+    self:_log(
+        terminal and "err" or "warn",
+        "KoReadalong KindleAudio failure",
+        terminal and "terminal" or "recoverable",
+        redact_path(message)
+    )
+end
+
+function KindleAudio:_log_cleanup_failure(message)
+    message = tostring(message or "unknown cleanup error")
+    if self.last_logged_cleanup_error == message then
+        return
+    end
+    self.last_logged_cleanup_error = message
+    self:_log(
+        "warn",
+        "KoReadalong KindleAudio cleanup failure",
+        redact_path(message)
+    )
+end
+
 function KindleAudio:_set_state(state)
+    local previous = self.state
     self.state = state
     self.status.state = state
     if state == KindleAudio.STATES.PLAYING then
@@ -285,6 +386,15 @@ function KindleAudio:_set_state(state)
         self.status.paused = true
     else
         self.status.paused = nil
+    end
+    if previous ~= state then
+        self:_log(
+            "info",
+            "KoReadalong KindleAudio state",
+            previous,
+            "->",
+            state
+        )
     end
 end
 
@@ -306,6 +416,7 @@ end
 function KindleAudio:_error(error_message)
     local message = tostring(error_message or "unknown KinAMP error")
     local resource_uncertain = self.playlist_owned or self.command_attempted
+    local terminal = self.terminal_error ~= nil or resource_uncertain
     if resource_uncertain then
         if not self.terminal_error then
             self.terminal_error = message
@@ -314,6 +425,7 @@ function KindleAudio:_error(error_message)
     else
         self.status.error = message
     end
+    self:_log_failure(message, terminal)
     if not self.closed then
         self:_set_state(KindleAudio.STATES.ERROR)
         if not self.stop_requested and not self.stop_sent
@@ -340,6 +452,7 @@ function KindleAudio:_probe()
     if result.status and not result.token then
         return nil, "KinAMP status publication token unavailable"
     end
+    self:_log_publication(result.token)
     return result
 end
 
@@ -349,6 +462,7 @@ function KindleAudio:_request_status()
     if not result then
         return nil, error_message
     end
+    self:_log_publication(result.token)
     if not result.live then
         return result
     end
@@ -373,6 +487,7 @@ function KindleAudio:_send(commands)
     -- that the daemon consumed none of it.  Keep cleanup terminal from this
     -- point, even when the write reports an error.
     self.command_attempted = true
+    self:_log_commands(commands)
     local sent, error_message = invoke(self.port, "send", commands)
     if not sent then
         return nil, error_message or "KinAMP command was not accepted"
@@ -395,6 +510,7 @@ function KindleAudio:_create_playlist()
     end
     self.playlist_path = path
     self.playlist_owned = true
+    self:_log("info", "KoReadalong KindleAudio playlist", "created")
     return true
 end
 
@@ -408,10 +524,12 @@ function KindleAudio:_remove_playlist()
         self.playlist_path
     )
     if not removed then
+        self:_log_cleanup_failure(error_message)
         return nil, error_message or "unable to remove KinAMP playlist"
     end
     self.playlist_path = nil
     self.playlist_owned = false
+    self:_log("info", "KoReadalong KindleAudio playlist", "removed")
     return true
 end
 
@@ -429,6 +547,10 @@ function KindleAudio:_clear_resource()
     self.resource_seen = false
     self.last_snapshot = nil
     self.last_daemon_state = nil
+    self.last_logged_token = nil
+    self.last_logged_error = nil
+    self.last_logged_error_terminal = nil
+    self.last_logged_cleanup_error = nil
     self.stop_requested = false
     self.stop_sent = false
     self.stop_baseline = nil
@@ -911,11 +1033,13 @@ function KindleAudio:_close_port()
     end
     local closed, error_message = invoke(self.port, "close")
     if not closed then
+        self:_log_cleanup_failure(error_message)
         self.status.cleanup_error = error_message
         return nil, error_message
     end
     self.close_finished = true
     self.poll_scheduled = false
+    self:_log("info", "KoReadalong KindleAudio port", "closed")
     return true
 end
 

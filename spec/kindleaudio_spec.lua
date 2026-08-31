@@ -34,6 +34,28 @@ local function make_timer()
     return timer
 end
 
+local function make_logger()
+    local logger = {
+        entries = {},
+    }
+    local function record(level, ...)
+        logger.entries[#logger.entries + 1] = {
+            level = level,
+            arguments = { ... },
+        }
+    end
+    function logger.info(...)
+        record("info", ...)
+    end
+    function logger.warn(...)
+        record("warn", ...)
+    end
+    function logger.err(...)
+        record("err", ...)
+    end
+    return logger
+end
+
 local function daemon_status(state, position, duration, path)
     return {
         state = state,
@@ -136,16 +158,18 @@ local function make_audio(options)
     local timer = options.timer or make_timer()
     local port = options.port or make_port(options)
     local writer = options.writer or make_writer()
+    local logger = options.logger or make_logger()
     local audio = KindleAudio.new{
         timer = timer,
         clock = function() return timer.now end,
         port = port,
         playlist_writer = writer,
+        logger = logger,
         startup_timeout = options.startup_timeout or 2,
         close_timeout = options.close_timeout or 2,
         poll_interval = options.poll_interval or 0.2,
     }
-    return audio, timer, port, writer
+    return audio, timer, port, writer, logger
 end
 
 local function tick(timer, count)
@@ -175,6 +199,39 @@ local function batch_with(port, name)
         end
     end
     return nil
+end
+
+local function log_count(logger, marker)
+    local count = 0
+    for _, entry in ipairs(logger.entries) do
+        if entry.arguments[1] == marker then
+            count = count + 1
+        end
+    end
+    return count
+end
+
+local function log_has_argument(logger, marker, value)
+    for _, entry in ipairs(logger.entries) do
+        if entry.arguments[1] == marker then
+            for index = 2, #entry.arguments do
+                if entry.arguments[index] == value then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+local function log_text(logger)
+    local values = {}
+    for _, entry in ipairs(logger.entries) do
+        for _, argument in ipairs(entry.arguments) do
+            values[#values + 1] = tostring(argument)
+        end
+    end
+    return table.concat(values, " ")
 end
 
 local function start_ready(options)
@@ -228,6 +285,7 @@ describe("KinAMP Kindle audio adapter", function()
             clock = function() return timer.now end,
             port = port,
             playlist_root = "/tmp",
+            logger = make_logger(),
         }
 
         assert.is_true(audio:open(AUDIO_PATH))
@@ -304,6 +362,101 @@ describe("KinAMP Kindle audio adapter", function()
         }
         tick(timer)
         assert.are.equal("playing", audio:getStatus().state)
+    end)
+
+    it("logs decisive transitions and commands without polling noise or paths", function()
+        local audio, timer, port, writer, logger = start_ready{
+            logger = make_logger(),
+        }
+        assert.is_true(audio:open(AUDIO_PATH, { position = 1.4 }))
+        assert.are.equal(1, log_count(logger, "KoReadalong KindleAudio state"))
+        assert.are.equal(2, log_count(logger, "KoReadalong KindleAudio publication"))
+        assert.is_true(log_has_argument(
+            logger,
+            "KoReadalong KindleAudio command",
+            "load"
+        ))
+        assert.is_true(log_has_argument(logger, "KoReadalong KindleAudio command", "<playlist>"))
+        assert.is_true(log_has_argument(logger, "KoReadalong KindleAudio command", "1"))
+        assert.is_false(log_text(logger):find(AUDIO_PATH, 1, true) ~= nil)
+        assert.is_false(log_text(logger):find(writer.created[1].path, 1, true) ~= nil)
+
+        local before_unchanged_polls = #logger.entries
+        tick(timer, 3)
+        assert.are.equal(before_unchanged_polls, #logger.entries)
+
+        port:queue{
+            live = true,
+            status = daemon_status("playing", 1, 10, AUDIO_PATH),
+            token = "a1",
+        }
+        tick(timer)
+        assert.are.equal(3, log_count(logger, "KoReadalong KindleAudio publication"))
+        assert.are.equal(2, log_count(logger, "KoReadalong KindleAudio state"))
+
+        local before_duplicate_publication = #logger.entries
+        port:queue{
+            live = true,
+            status = daemon_status("playing", 2, 10, AUDIO_PATH),
+            token = "a1",
+        }
+        tick(timer)
+        assert.are.equal(before_duplicate_publication, #logger.entries)
+    end)
+
+    it("deduplicates repeated failure and unchanged-state logs", function()
+        local logger = make_logger()
+        local audio = make_audio{
+            logger = logger,
+            port = make_port{ live = false },
+        }
+        assert.is_nil(audio:open(AUDIO_PATH))
+        local failure_count = log_count(
+            logger,
+            "KoReadalong KindleAudio failure"
+        )
+        local state_count = log_count(logger, "KoReadalong KindleAudio state")
+        audio:_error("KinAMP daemon is not running; start KinAMP first")
+        audio:_set_state(KindleAudio.STATES.ERROR)
+        assert.are.equal(failure_count, log_count(
+            logger,
+            "KoReadalong KindleAudio failure"
+        ))
+        assert.are.equal(state_count, log_count(
+            logger,
+            "KoReadalong KindleAudio state"
+        ))
+    end)
+
+    it("logs owned cleanup transitions without repeating them", function()
+        local audio, timer, port, writer, logger = start_ready{
+            logger = make_logger(),
+        }
+        assert.is_true(audio:open(AUDIO_PATH))
+        port:queue{
+            live = true,
+            status = daemon_status("playing", 1, 10, AUDIO_PATH),
+            token = "a1",
+        }
+        tick(timer)
+        assert.is_true(audio:close())
+        port:queue{
+            live = true,
+            status = daemon_status("stopped", 1, 10, AUDIO_PATH),
+            token = "a1",
+        }
+        tick(timer)
+        port:queue{
+            live = true,
+            status = daemon_status("stopped", 0, 10, AUDIO_PATH),
+            token = "a2",
+        }
+        tick(timer)
+        assert.are.equal(2, log_count(logger, "KoReadalong KindleAudio playlist"))
+        assert.is_true(log_has_argument(logger, "KoReadalong KindleAudio playlist", "removed"))
+        assert.are.equal(1, log_count(logger, "KoReadalong KindleAudio port"))
+        assert.is_true(log_has_argument(logger, "KoReadalong KindleAudio port", "closed"))
+        assert.are.equal(1, #writer.removed)
     end)
 
     it("forces the first status publication when no status file exists yet", function()
@@ -885,12 +1038,20 @@ describe("KinAMP Kindle audio adapter", function()
     end)
 
     it("does not retry a failed open while doing terminal cleanup", function()
-        local audio, timer, port, writer = start_ready()
+        local audio, timer, port, writer, logger = start_ready{
+            logger = make_logger(),
+        }
         port.send_error = "open write failed"
         local opened, error_message = audio:open(AUDIO_PATH)
         assert.is_nil(opened)
         assert.matches("open write failed", error_message)
         assert.is_false(audio:getStatus().recoverable)
+        assert.are.equal(1, log_count(logger, "KoReadalong KindleAudio failure"))
+        assert.is_true(log_has_argument(
+            logger,
+            "KoReadalong KindleAudio failure",
+            "terminal"
+        ))
         assert.are.equal(1, #writer.created)
         local retry, retry_error = audio:open(AUDIO_PATH)
         assert.is_nil(retry)
