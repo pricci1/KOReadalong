@@ -364,7 +364,7 @@ describe("KinAMP Kindle audio adapter", function()
         assert.are.equal("playing", audio:getStatus().state)
     end)
 
-    it("logs decisive transitions and commands without polling noise or paths", function()
+    it("logs decisive transitions without fresh-token polling noise or paths", function()
         local audio, timer, port, writer, logger = start_ready{
             logger = make_logger(),
         }
@@ -381,10 +381,6 @@ describe("KinAMP Kindle audio adapter", function()
         assert.is_false(log_text(logger):find(AUDIO_PATH, 1, true) ~= nil)
         assert.is_false(log_text(logger):find(writer.created[1].path, 1, true) ~= nil)
 
-        local before_unchanged_polls = #logger.entries
-        tick(timer, 3)
-        assert.are.equal(before_unchanged_polls, #logger.entries)
-
         port:queue{
             live = true,
             status = daemon_status("playing", 1, 10, AUDIO_PATH),
@@ -394,14 +390,39 @@ describe("KinAMP Kindle audio adapter", function()
         assert.are.equal(3, log_count(logger, "KoReadalong KindleAudio publication"))
         assert.are.equal(2, log_count(logger, "KoReadalong KindleAudio state"))
 
-        local before_duplicate_publication = #logger.entries
+        local before_routine_polls = #logger.entries
+        for _, token in ipairs({ "poll-1", "poll-2", "poll-3" }) do
+            port:queue{
+                live = true,
+                status = daemon_status("playing", 1, 10, AUDIO_PATH),
+                token = token,
+            }
+            tick(timer)
+        end
+        assert.are.equal(before_routine_polls, #logger.entries)
+        assert.are.equal(3, log_count(logger, "KoReadalong KindleAudio publication"))
+
+        assert.is_true(audio:stop())
         port:queue{
             live = true,
-            status = daemon_status("playing", 2, 10, AUDIO_PATH),
-            token = "a1",
+            status = daemon_status("playing", 1, 10, AUDIO_PATH),
+            token = "stop-command",
         }
         tick(timer)
-        assert.are.equal(before_duplicate_publication, #logger.entries)
+        local before_release = #logger.entries
+        port:queue{
+            live = true,
+            status = daemon_status("stopped", 1, 10, AUDIO_PATH),
+            token = "release-1",
+        }
+        tick(timer)
+        assert.is_true(#logger.entries > before_release)
+        assert.are.equal(4, log_count(logger, "KoReadalong KindleAudio publication"))
+        assert.is_true(log_has_argument(
+            logger,
+            "KoReadalong KindleAudio publication",
+            "release-1"
+        ))
     end)
 
     it("deduplicates repeated failure and unchanged-state logs", function()

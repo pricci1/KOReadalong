@@ -452,7 +452,6 @@ function KindleAudio:_probe()
     if result.status and not result.token then
         return nil, "KinAMP status publication token unavailable"
     end
-    self:_log_publication(result.token)
     return result
 end
 
@@ -462,7 +461,6 @@ function KindleAudio:_request_status()
     if not result then
         return nil, error_message
     end
-    self:_log_publication(result.token)
     if not result.live then
         return result
     end
@@ -692,6 +690,7 @@ function KindleAudio:_process_stop(status, token, fresh)
     end
     if not self:_matches(status) then
         if status.path and status.path ~= "" and fresh then
+            self:_log_publication(token)
             self.release_confirmed = true
             return self:_finish_resource()
         end
@@ -699,6 +698,7 @@ function KindleAudio:_process_stop(status, token, fresh)
     end
     if self.stop_sent then
         if fresh and token ~= self.stop_baseline and status.state == "stopped" then
+            self:_log_publication(token)
             self.release_confirmed = true
             return self:_finish_resource()
         end
@@ -743,6 +743,7 @@ function KindleAudio:_process_preload(snapshot)
     if not created then
         return self:_error(error_message)
     end
+    self:_log_publication(snapshot.token)
     local commands = {
         { "load", self.playlist_path },
         { "index", 0 },
@@ -794,6 +795,9 @@ function KindleAudio:_process_snapshot(snapshot)
             return true
         end
         self.resource_seen = true
+        if self:_matches(status) then
+            self:_log_publication(snapshot.token)
+        end
     end
     if self.terminal_error or self.state == KindleAudio.STATES.ENDED
         or not fresh or not self:_matches(status) then
@@ -923,6 +927,7 @@ function KindleAudio:open(path, options)
         return self:_error("KinAMP is busy")
     end
     self.baseline_token = probe.token
+    self:_log_publication(probe.token)
 
     local snapshot, request_error = self:_request_status()
     if not snapshot then
@@ -1110,6 +1115,7 @@ function KindleAudio:_poll_close()
     self.last_token = snapshot.token
     if not self:_matches(status) then
         if status.path and status.path ~= "" and fresh then
+            self:_log_publication(snapshot.token)
             self.close_release_confirmed = true
             self:_complete_close()
         else
@@ -1122,6 +1128,7 @@ function KindleAudio:_poll_close()
     if self.stop_sent then
         if fresh and snapshot.token ~= self.stop_baseline
             and status.state == "stopped" then
+            self:_log_publication(snapshot.token)
             self.close_release_confirmed = true
             self:_complete_close()
         else
