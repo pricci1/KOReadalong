@@ -86,6 +86,15 @@ function PlaybackDialog:onFollowStateChanged()
     end
 end
 
+function PlaybackDialog:onReturnAvailabilityChanged()
+    if self.is_open then
+        -- The row remains visible and only changes enabled state.  Refresh the
+        -- dialog once when a valid range appears or disappears; narration
+        -- polling does not call this for unchanged availability.
+        self:_refresh(true)
+    end
+end
+
 function PlaybackDialog:init()
     self.scheduler = self.scheduler or UIManager
     self.title = _("Read along")

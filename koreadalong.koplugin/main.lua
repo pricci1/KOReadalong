@@ -152,6 +152,16 @@ function KoReadalong:_set_follow_state(state)
     end
 end
 
+function KoReadalong:_notify_return_availability_changed(was_available)
+    if was_available == self:canReturnToNarration() then
+        return
+    end
+    if self.playback_dialog
+        and type(self.playback_dialog.onReturnAvailabilityChanged) == "function" then
+        self.playback_dialog:onReturnAvailabilityChanged()
+    end
+end
+
 function KoReadalong:_reset_navigation()
     self:_cancel_navigation_guard()
     self:_cancel_navigation_candidate()
@@ -662,18 +672,23 @@ function KoReadalong:onReaderReady()
         clips = clips,
         on_range = function(pos0, pos1)
             if valid_xpointer(pos0) and valid_xpointer(pos1) then
+                local was_return_available = self:canReturnToNarration()
                 self.latest_range = {
                     pos0 = pos0,
                     pos1 = pos1,
                 }
                 self:_follow_range(pos0, pos1)
+                self:_notify_return_availability_changed(was_return_available)
             end
         end,
         on_range_cleared = function(reason)
+            local was_return_available = self:canReturnToNarration()
             self.latest_range = nil
             if reason == "stop" or reason == "ended"
                 or reason == "close" or reason == "error" then
                 self:_reset_navigation()
+            else
+                self:_notify_return_availability_changed(was_return_available)
             end
         end,
         on_error = function(error_message)

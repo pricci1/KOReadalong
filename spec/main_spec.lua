@@ -587,6 +587,27 @@ describe("KoReadalong lifecycle and menu", function()
         }, plugin.latest_range)
     end)
 
+    it("updates Return availability when browsing loses or gains a range", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        plugin:_set_browsing()
+        plugin.playback_dialog = {
+            availability_updates = 0,
+            onReturnAvailabilityChanged = function(self)
+                self.availability_updates = self.availability_updates + 1
+            end,
+        }
+        plugin.latest_range = { pos0 = "narrated", pos1 = "narrated-end" }
+        plugin.coordinator.options.on_range_cleared("gap")
+        assert.are.equal(1, plugin.playback_dialog.availability_updates)
+
+        plugin.coordinator.options.on_range("later-start", "later-end")
+        assert.are.equal(2, plugin.playback_dialog.availability_updates)
+
+        plugin.coordinator.options.on_range("later-start", "later-end")
+        assert.are.equal(2, plugin.playback_dialog.availability_updates)
+    end)
+
     it("enters following before a same-resource Read from here range callback", function()
         plugin:onReaderReady()
         plugin:_set_browsing()
