@@ -460,6 +460,20 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal(0, highlight.add_count)
     end)
 
+    it("routes the registered Return to narration dispatcher event", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        plugin.latest_range = { pos0 = "narrated", pos1 = "narrated-end" }
+        plugin:_set_browsing()
+        range_visible = false
+
+        assert.are.equal("ReturnToNarration",
+            dispatcher.actions.koreadalong_return_to_narration.event)
+        assert.is_true(plugin:onReturnToNarration())
+        assert.are.equal("following", plugin.follow_state)
+        assert.are.equal("narrated", goto_events[1].args[1])
+    end)
+
     it("capability-gates non-CRe documents", function()
         plugin.document.provider = "pdf"
         plugin:onReaderReady()
@@ -585,6 +599,26 @@ describe("KoReadalong lifecycle and menu", function()
             pos0 = "later-start",
             pos1 = "later-end",
         }, plugin.latest_range)
+    end)
+
+    it("keeps browsing through seek and resource handoff without stale jumps", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        plugin:_set_browsing()
+        plugin.latest_range = { pos0 = "first-start", pos1 = "first-end" }
+        range_visible = false
+
+        plugin.coordinator.options.on_range_cleared("transition")
+        assert.are.equal("browsing", plugin.follow_state)
+        assert.is_nil(plugin.latest_range)
+
+        plugin.coordinator.options.on_range("second-start", "second-end")
+        assert.are.equal("browsing", plugin.follow_state)
+        assert.are.same({
+            pos0 = "second-start",
+            pos1 = "second-end",
+        }, plugin.latest_range)
+        assert.are.equal(0, #goto_events)
     end)
 
     it("updates Return availability when browsing loses or gains a range", function()
@@ -835,6 +869,12 @@ describe("KoReadalong lifecycle and menu", function()
         plugin.latest_range = { pos0 = "narrated", pos1 = "narrated-end" }
         plugin:_set_browsing()
         plugin.coordinator.options.on_range_cleared("stop")
+        assert.are.equal("following", plugin.follow_state)
+        assert.is_nil(plugin.latest_range)
+
+        plugin.latest_range = { pos0 = "narrated", pos1 = "narrated-end" }
+        plugin:_set_browsing()
+        plugin.coordinator.options.on_range_cleared("ended")
         assert.are.equal("following", plugin.follow_state)
         assert.is_nil(plugin.latest_range)
 
