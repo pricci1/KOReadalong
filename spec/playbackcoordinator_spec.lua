@@ -1106,6 +1106,23 @@ describe("playback coordinator", function()
         assert.matches("reopen the document", retry_error)
     end)
 
+    it("clears the current range when playback fails", function()
+        local coordinator, scheduler, adapter, _, _, overlay, _, _, ranges_cleared =
+            make_fixture(clips_fixture())
+        assert.is_true(coordinator:start())
+        mark_ready(adapter)
+        scheduler:fire_any()
+        assert.is_not_nil(coordinator:getCurrentRange())
+
+        adapter.error = "decoder disconnected"
+        adapter.state = "error"
+        scheduler:fire_any()
+
+        assert.is_nil(coordinator:getCurrentRange())
+        assert.is_true(overlay.clears > 0)
+        assert.are.equal("error", ranges_cleared[#ranges_cleared])
+    end)
+
     it("surfaces transition cleanup errors without claiming the resource is gone", function()
         local clips = clips_fixture()
         clips[2] = nil

@@ -336,6 +336,7 @@ function PlaybackCoordinator:_fail(error_message, skip_stop)
     self.intent = nil
     self.transition = nil
     self.cleanup_pending = false
+    self:_clear_overlay("error")
     if self.materialized_path or self.current_audio_path then
         if not skip_stop and not self.stop_issued then
             self.stop_issued = true
@@ -349,8 +350,6 @@ function PlaybackCoordinator:_fail(error_message, skip_stop)
         elseif not removed then
             self.cleanup_pending = true
         end
-    else
-        self:_clear_overlay("error")
     end
     self.stop_issued = false
     if recoverable and not self.cleanup_pending and not self.cleanup_error then
@@ -359,7 +358,6 @@ function PlaybackCoordinator:_fail(error_message, skip_stop)
         -- retry this document without reopening it.
         self.current_clip_index = nil
         self.state = PlaybackCoordinator.STATES.IDLE
-        self:_clear_overlay("error")
     else
         self.state = PlaybackCoordinator.STATES.ERROR
     end
