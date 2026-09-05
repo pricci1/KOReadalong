@@ -56,7 +56,7 @@ local function action_label(state)
     elseif state == "error" then
         return _("Unavailable")
     end
-    return _("Start")
+    return _("Start here")
 end
 
 function PlaybackDialog:init()
@@ -86,6 +86,51 @@ function PlaybackDialog:init()
         self.progress_bar,
     }
     self._added_widgets = { self.status_group }
+
+    local has_resume = type(self.coordinator.canResume) == "function"
+        and self.coordinator:canResume()
+    local start_choices = {
+        {
+            id = "start_here",
+            text = _("Start here"),
+            enabled_func = function()
+                return type(self.coordinator.canChooseStart) ~= "function"
+                    or self.coordinator:canChooseStart()
+            end,
+            callback = function()
+                self:_run(function()
+                    return self.coordinator:startHere()
+                end)
+            end,
+        },
+    }
+    if has_resume then
+        table.insert(start_choices, 1, {
+            id = "resume",
+            text = _("Resume"),
+            enabled_func = function()
+                return self.coordinator:canResume()
+            end,
+            callback = function()
+                self:_run(function()
+                    return self.coordinator:resumeSaved()
+                end)
+            end,
+        })
+        start_choices[#start_choices + 1] = {
+            id = "start_over",
+            text = _("Start over"),
+            enabled_func = function()
+                return type(self.coordinator.canChooseStart) ~= "function"
+                    or self.coordinator:canChooseStart()
+            end,
+            callback = function()
+                self:_run(function()
+                    return self.coordinator:startOver()
+                end)
+            end,
+        }
+    end
 
     self.buttons = {
         {
@@ -143,6 +188,7 @@ function PlaybackDialog:init()
                 end,
             },
         },
+        start_choices,
     }
 
     self.refresh_action = function()

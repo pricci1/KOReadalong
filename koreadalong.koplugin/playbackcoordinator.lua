@@ -61,6 +61,32 @@ local function valid_xpointer(pointer)
     return type(pointer) == "string" and pointer ~= ""
 end
 
+local function finite_number(value)
+    return type(value) == "number"
+        and value == value
+        and value ~= math.huge
+        and value ~= -math.huge
+end
+
+local function same_clip_identity(left, right)
+    if type(left) ~= "table" or type(right) ~= "table" then
+        return false
+    end
+    for _, field in ipairs{
+        "text_path",
+        "text_fragment",
+        "spine_index",
+        "audio_path",
+        "clip_begin",
+        "clip_end",
+    } do
+        if left[field] ~= right[field] then
+            return false
+        end
+    end
+    return true
+end
+
 local function compare_xpointers(document, left, right)
     local compared, compare_error = invoke(
         document,
@@ -92,9 +118,16 @@ function PlaybackCoordinator.new(options)
         clips = clips,
         state = PlaybackCoordinator.STATES.IDLE,
         intent = nil,
+        state_store = options.state_store,
+        get_current_xpointer = options.get_current_xpointer,
+        on_location = options.on_location,
+        on_clear_location = options.on_clear_location,
+        resume_location = nil,
+        resume_checked = false,
         current_clip_index = nil,
         current_audio_path = nil,
         materialized_path = nil,
+        resource_start_position = nil,
         playback_position = nil,
         playback_duration = nil,
         range_cache = {},
@@ -239,6 +272,7 @@ function PlaybackCoordinator:_remove_materialized_audio()
     end
     self.materialized_path = nil
     self.current_audio_path = nil
+    self.resource_start_position = nil
     self.playback_position = nil
     self.playback_duration = nil
     return true
@@ -368,6 +402,186 @@ function PlaybackCoordinator:_resolve_range(index)
     return range
 end
 
+function PlaybackCoordinator:_confirm_location(index, position)
+    if type(self.on_location) ~= "function"
+        and not self.state_store then
+        return
+    end
+    if not finite_number(position) then
+        return
+    end
+    local clip = self.clips[index]
+    if not clip or position < clip.clip_begin or position >= clip.clip_end then
+        return
+    end
+    local range = self:_get_range(index)
+    if not range then
+        return
+    end
+    local location = {
+        clip = clip,
+        pos0 = range.pos0,
+        pos1 = range.pos1,
+        position = position,
+    }
+    if self.state_store then
+        invoke_optional(self.state_store, "save", location)
+    end
+    if type(self.on_location) == "function" then
+        pcall(self.on_location, location)
+    end
+end
+
+function PlaybackCoordinator:_clear_saved_location()
+    self.resume_location = nil
+    self.resume_checked = true
+    if self.state_store then
+        invoke_optional(self.state_store, "clear")
+    end
+    if type(self.on_clear_location) == "function" then
+        pcall(self.on_clear_location)
+    end
+end
+
+function PlaybackCoordinator:_find_first_valid_clip()
+    for index = 1, #self.clips do
+        local range = self:_get_range(index)
+        if range then
+            return index, range
+        end
+    end
+    return nil, nil, "no valid narrated segment"
+end
+
+function PlaybackCoordinator:findClipAtOrAfterXPointer(pointer)
+    if not valid_xpointer(pointer) then
+        return nil, nil, "reading position has no valid XPointer"
+    end
+    for index = 1, #self.clips do
+        local range = self:_get_range(index)
+        if range then
+            local current_before_range_end, compare_error = compare_xpointers(
+                self.document,
+                pointer,
+                range.pos1
+            )
+            if not current_before_range_end then
+                return nil, nil, compare_error
+            end
+            if current_before_range_end == 1 then
+                return index, range
+            end
+        end
+    end
+    return nil, nil, "no narrated segment at or after current reading position"
+end
+
+function PlaybackCoordinator:_find_saved_location(saved)
+    if type(saved) ~= "table"
+        or not valid_xpointer(saved.pos0)
+        or not valid_xpointer(saved.pos1)
+        or not finite_number(saved.position) then
+        return nil, "saved narration location is malformed"
+    end
+    local selection_order, compare_error = compare_xpointers(
+        self.document,
+        saved.pos0,
+        saved.pos1
+    )
+    if selection_order ~= 1 then
+        return nil, compare_error or "saved narration location is empty or reversed"
+    end
+    for _, pointer in ipairs{ saved.pos0, saved.pos1 } do
+        local in_document, in_document_error = invoke(
+            self.document,
+            "isXPointerInDocument",
+            pointer
+        )
+        if in_document ~= true then
+            return nil, in_document_error or "saved narration location is not in this EPUB"
+        end
+    end
+
+    for index, clip in ipairs(self.clips) do
+        if same_clip_identity(clip, saved.clip) then
+            if saved.position < clip.clip_begin
+                or saved.position >= clip.clip_end then
+                return nil, "saved narration audio position is outside its clip"
+            end
+            local range = self:_get_range(index)
+            if not range then
+                return nil, "saved narration target is no longer valid"
+            end
+            local saved_before_range_end
+            saved_before_range_end, compare_error = compare_xpointers(
+                self.document,
+                saved.pos0,
+                range.pos1
+            )
+            if not saved_before_range_end then
+                return nil, compare_error
+            end
+            local range_before_saved_end
+            range_before_saved_end, compare_error = compare_xpointers(
+                self.document,
+                range.pos0,
+                saved.pos1
+            )
+            if not range_before_saved_end then
+                return nil, compare_error
+            end
+            if saved_before_range_end == 1 and range_before_saved_end == 1 then
+                return index, range
+            end
+            return nil, "saved narration target no longer contains its XPointer"
+        end
+    end
+    return nil, "saved narration clip is no longer in this EPUB"
+end
+
+function PlaybackCoordinator:_get_resume_location()
+    if self.resume_checked then
+        return self.resume_location
+    end
+    self.resume_checked = true
+    if not self.state_store then
+        return nil
+    end
+    local saved, load_error = invoke(self.state_store, "load")
+    if not saved then
+        if load_error then
+            invoke_optional(self.state_store, "clear")
+        end
+        return nil
+    end
+    local index, range = self:_find_saved_location(saved)
+    if not index then
+        invoke_optional(self.state_store, "clear")
+        return nil
+    end
+    saved.index = index
+    saved.range = range
+    self.resume_location = saved
+    return saved
+end
+
+function PlaybackCoordinator:getResumeLocation()
+    return self:_get_resume_location()
+end
+
+function PlaybackCoordinator:canResume()
+    return not self.closed
+        and (self.state == PlaybackCoordinator.STATES.IDLE
+            or self.state == PlaybackCoordinator.STATES.ENDED)
+        and self:_get_resume_location() ~= nil
+end
+
+function PlaybackCoordinator:canChooseStart()
+    return not self.closed
+        and (self.state == PlaybackCoordinator.STATES.IDLE
+            or self.state == PlaybackCoordinator.STATES.ENDED)
+end
+
 function PlaybackCoordinator:_find_clip_for_selection(pos0, pos1)
     if not valid_xpointer(pos0) or not valid_xpointer(pos1) then
         return nil, nil, "selected text has no valid XPointer range"
@@ -426,7 +640,7 @@ function PlaybackCoordinator:canPlayFromXPointer(pos0, pos1)
 end
 
 function PlaybackCoordinator:_update_overlay(audio_path, position)
-    if type(position) ~= "number" then
+    if not finite_number(position) then
         return
     end
     local clip = self.timeline:lookup(audio_path, position)
@@ -435,11 +649,15 @@ function PlaybackCoordinator:_update_overlay(audio_path, position)
         self:_clear_overlay()
         return
     end
+    local changed = self.current_clip_index ~= index
     self.current_clip_index = index
-    self:_resolve_range(index)
+    local range = self:_resolve_range(index)
+    if changed and range then
+        self:_confirm_location(index, position)
+    end
 end
 
-function PlaybackCoordinator:_prepare_resource(index)
+function PlaybackCoordinator:_prepare_resource(index, initial_position)
     local clip = self.clips[index]
     if not clip then
         self.state = PlaybackCoordinator.STATES.ENDED
@@ -456,6 +674,13 @@ function PlaybackCoordinator:_prepare_resource(index)
     end
     self.current_clip_index = index
     self.current_audio_path = clip.audio_path
+    local open_position = initial_position
+    if not finite_number(open_position)
+        or open_position < clip.clip_begin
+        or open_position >= clip.clip_end then
+        open_position = clip.clip_begin
+    end
+    self.resource_start_position = open_position
     self.playback_position = nil
     self.playback_duration = nil
     self.state = PlaybackCoordinator.STATES.LOADING
@@ -476,7 +701,7 @@ function PlaybackCoordinator:_prepare_resource(index)
         "open",
         local_path,
         {
-            position = clip.clip_begin,
+            position = open_position,
             paused = self.intent == PlaybackCoordinator.STATES.PAUSED,
         }
     )
@@ -512,6 +737,7 @@ function PlaybackCoordinator:_prepare_same_resource(index, range)
     self:_schedule_poll()
     if range then
         self:_show_range(range)
+        self:_confirm_location(index, clip.clip_begin)
     end
     return true
 end
@@ -583,6 +809,7 @@ function PlaybackCoordinator:_finish_stopping(status)
         self.current_clip_index = nil
         self.intent = nil
         self.state = PlaybackCoordinator.STATES.ENDED
+        self:_clear_saved_location()
         self:_unschedule_poll()
         self:_clear_overlay()
         return true
@@ -590,6 +817,7 @@ function PlaybackCoordinator:_finish_stopping(status)
         self.current_clip_index = nil
         self.intent = nil
         self.state = PlaybackCoordinator.STATES.IDLE
+        self:_clear_saved_location()
         self:_unschedule_poll()
         self:_clear_overlay()
         return true
@@ -614,11 +842,12 @@ function PlaybackCoordinator:_finish_load(status)
     end
 
     local clip = self.clips[self.current_clip_index]
-    self.playback_position = clip.clip_begin
+    self.playback_position = self.resource_start_position or clip.clip_begin
     self.playback_duration = status.duration
     self.state = status.state
     self.intent = status.state
-    self:_update_overlay(self.current_audio_path, clip.clip_begin)
+    self:_update_overlay(self.current_audio_path, self.playback_position)
+    self:_confirm_location(self.current_clip_index, self.playback_position)
     return true
 end
 
@@ -678,7 +907,7 @@ function PlaybackCoordinator:_poll()
     end
 end
 
-function PlaybackCoordinator:start()
+function PlaybackCoordinator:_start_from_index(index, initial_position)
     if self.closed then
         return nil, "read-along coordinator is closed"
     end
@@ -692,7 +921,7 @@ function PlaybackCoordinator:start()
         return true
     end
     if self.state == PlaybackCoordinator.STATES.PAUSED then
-        return self:resume()
+        return nil, "read-along is already paused"
     end
     if self.state == PlaybackCoordinator.STATES.LOADING then
         return nil, "audio is still loading"
@@ -700,10 +929,90 @@ function PlaybackCoordinator:start()
     if self.state == PlaybackCoordinator.STATES.STOPPING then
         return nil, "audio is still stopping"
     end
+    if self.materialized_path or self.current_audio_path then
+        return nil, "audio resource ownership is still active"
+    end
     self.error = nil
     self.intent = PlaybackCoordinator.STATES.PLAYING
     self.generation = self.generation + 1
-    return self:_prepare_resource(1)
+    return self:_prepare_resource(index, initial_position)
+end
+
+function PlaybackCoordinator:startHere()
+    if self.closed then
+        return nil, "read-along coordinator is closed"
+    end
+    if #self.clips == 0 then
+        return nil, "this document has no media overlays"
+    end
+    if self.state == PlaybackCoordinator.STATES.PLAYING then
+        return true
+    end
+    if self.state == PlaybackCoordinator.STATES.PAUSED then
+        return self:resume()
+    end
+    if self.state == PlaybackCoordinator.STATES.ERROR then
+        return nil, "read-along audio failed; reopen the document to retry"
+    end
+    if self.state == PlaybackCoordinator.STATES.LOADING then
+        return nil, "audio is still loading"
+    end
+    if self.state == PlaybackCoordinator.STATES.STOPPING then
+        return nil, "audio is still stopping"
+    end
+
+    local current_xpointer
+    if type(self.get_current_xpointer) == "function" then
+        local ok, pointer = pcall(self.get_current_xpointer)
+        if ok and valid_xpointer(pointer) then
+            current_xpointer = pointer
+        end
+    end
+    local index, range, find_error
+    if current_xpointer then
+        index, range, find_error = self:findClipAtOrAfterXPointer(current_xpointer)
+        if not index or not range then
+            return nil, find_error
+        end
+    elseif type(self.get_current_xpointer) ~= "function" then
+        return self:_start_from_index(1)
+    else
+        index, range, find_error = self:_find_first_valid_clip()
+        if not index or not range then
+            return nil, find_error
+        end
+    end
+    return self:_start_from_index(index)
+end
+
+function PlaybackCoordinator:startOver()
+    if not self:canChooseStart() then
+        return nil, "read-along is not ready to start over"
+    end
+    local index, range, find_error = self:_find_first_valid_clip()
+    if not index or not range then
+        return nil, find_error
+    end
+    self:_clear_saved_location()
+    return self:_start_from_index(index)
+end
+
+function PlaybackCoordinator:resumeSaved()
+    if not self:canChooseStart() then
+        return nil, "read-along is not ready to resume"
+    end
+    local saved = self:_get_resume_location()
+    if not saved then
+        return self:startHere()
+    end
+    return self:_start_from_index(saved.index, saved.position)
+end
+
+function PlaybackCoordinator:start()
+    if self.state == PlaybackCoordinator.STATES.PAUSED then
+        return self:resume()
+    end
+    return self:startHere()
 end
 
 function PlaybackCoordinator:pause()
@@ -717,6 +1026,7 @@ function PlaybackCoordinator:pause()
     self.state = PlaybackCoordinator.STATES.PAUSED
     self.intent = PlaybackCoordinator.STATES.PAUSED
     self:_unschedule_poll()
+    self:_confirm_location(self.current_clip_index, self.playback_position)
     return true
 end
 
@@ -841,6 +1151,20 @@ function PlaybackCoordinator:close()
             end
         end
         return true
+    end
+    if self.state == PlaybackCoordinator.STATES.PLAYING
+        or self.state == PlaybackCoordinator.STATES.PAUSED then
+        local status = invoke(self.adapter, "getStatus")
+        local position = self.playback_position
+        if type(status) == "table" and finite_number(status.position) then
+            position = status.position
+        end
+        local clip = self.timeline
+            and self.timeline:lookup(self.current_audio_path, position)
+        local index = clip and self.clip_indexes[clip]
+        if index then
+            self:_confirm_location(index, position)
+        end
     end
     -- Invalidate first: callbacks already dequeued by UIManager must become
     -- no-ops and must never schedule themselves again.

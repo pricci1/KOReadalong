@@ -6,6 +6,7 @@ local Materializer = require("materializer")
 local MediaOverlays = require("mediaoverlays")
 local PlaybackCoordinator = require("playbackcoordinator")
 local PlaybackDialog = require("playbackdialog")
+local NarrationState = require("narrationstate")
 local Timeline = require("timeline")
 local UnderlineOverlay = require("underlineoverlay")
 local Event = require("ui/event")
@@ -237,6 +238,11 @@ function KoReadalong:onReaderReady()
         return
     end
 
+    local state_store = NarrationState.new{
+        settings = self.ui.doc_settings,
+        clips = clips,
+    }
+
     self.overlay = UnderlineOverlay.new{
         dialog = self.dialog,
         document = self.document,
@@ -255,6 +261,10 @@ function KoReadalong:onReaderReady()
         timeline = timeline,
         resolver = FragmentResolver,
         document = self.document,
+        state_store = state_store,
+        get_current_xpointer = function()
+            return self.document:getXPointer()
+        end,
         overlay = self.overlay,
         clips = clips,
         on_range = function(pos0, pos1)
