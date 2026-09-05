@@ -31,6 +31,7 @@ describe("playback dialog", function()
                         local button = {
                             text = entry.text,
                             width = 100,
+                            enabled_func = entry.enabled_func,
                         }
                         function button:setText(text)
                             self.text = text
@@ -265,7 +266,7 @@ describe("playback dialog", function()
         coordinator.position = 30
         coordinator.duration = 120
         scheduler:fire(dialog.refresh_action)
-        assert.are.equal("Playing\n0:30 / 2:00", dialog.status_text.text)
+        assert.are.equal("Playing · following\n0:30 / 2:00", dialog.status_text.text)
         assert.are.equal(0.25, dialog.progress_bar.percentage)
         assert.are.equal("Pause", dialog:getButtonById("toggle").text)
         scheduler:fire(dialog.refresh_action)
@@ -396,5 +397,88 @@ describe("playback dialog", function()
         dialog:onShow()
         dialog.buttons[1][2].callback()
         assert.are.equal(0, reported)
+    end)
+
+    it("shows following and browsing state without changing the transport", function()
+        local follow_state = "following"
+        coordinator.state = "playing"
+        coordinator.position = 30
+        coordinator.duration = 120
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+            get_follow_state = function()
+                return follow_state
+            end,
+            get_return_enabled = function()
+                return follow_state == "browsing"
+            end,
+        }
+        dialog:onShow()
+        assert.are.equal("Playing · following\n0:30 / 2:00", dialog.status_text.text)
+
+        follow_state = "browsing"
+        dialog:onFollowStateChanged()
+        assert.are.equal("Playing · browsing\n0:30 / 2:00", dialog.status_text.text)
+        assert.are.equal("ui", ui_manager.dirty[#ui_manager.dirty].refresh_type)
+        assert.are.equal(dialog.movable.dimen, ui_manager.dirty[#ui_manager.dirty].dimen)
+    end)
+
+    it("exposes a full-width return action and refreshes its enabled state", function()
+        local return_enabled = false
+        local returned = 0
+        coordinator.state = "playing"
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+            get_return_enabled = function()
+                return return_enabled
+            end,
+            on_return = function()
+                returned = returned + 1
+                return true
+            end,
+        }
+        local return_row = dialog.buttons[4]
+        assert.are.equal(1, #return_row)
+        assert.are.equal("Return to narration", return_row[1].text)
+        assert.is_false(return_row[1].enabled_func())
+
+        return_enabled = true
+        assert.is_true(return_row[1].enabled_func())
+        return_row[1].callback()
+        assert.are.equal(1, returned)
+        assert.are.equal(1, #ui_manager.dirty)
+    end)
+
+    it("calls start hooks for new starts but preserves browsing on resume", function()
+        local started = 0
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+            get_follow_state = function()
+                return "browsing"
+            end,
+            on_start = function()
+                started = started + 1
+            end,
+        }
+        dialog.buttons[3][1].callback()
+        assert.are.equal(1, started)
+
+        coordinator.state = "paused"
+        dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+            get_follow_state = function()
+                return "browsing"
+            end,
+            on_start = function()
+                started = started + 1
+            end,
+        }
+        dialog.buttons[1][2].callback()
+        assert.are.equal(1, started)
+        assert.are.equal("playing", coordinator.state)
     end)
 end)

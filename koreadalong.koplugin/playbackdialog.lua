@@ -27,21 +27,30 @@ local function format_time(seconds)
     return string.format("%d:%02d", minutes, remaining_seconds)
 end
 
-local function state_label(state)
+local function state_label(state, follow_state)
+    local label
     if state == "playing" then
-        return _("Playing")
+        label = _("Playing")
     elseif state == "paused" then
-        return _("Paused")
+        label = _("Paused")
     elseif state == "loading" then
-        return _("Loading…")
+        label = _("Loading…")
     elseif state == "stopping" then
-        return _("Stopping…")
+        label = _("Stopping…")
     elseif state == "ended" then
-        return _("Finished")
+        label = _("Finished")
     elseif state == "error" then
-        return _("Unavailable")
+        label = _("Unavailable")
+    else
+        label = _("Ready")
     end
-    return _("Ready")
+    if state == "playing" or state == "paused" then
+        local location = follow_state == "browsing"
+            and _("browsing")
+            or _("following")
+        return label .. " · " .. location
+    end
+    return label
 end
 
 local function action_label(state)
@@ -59,6 +68,24 @@ local function action_label(state)
     return _("Start here")
 end
 
+function PlaybackDialog:_get_follow_state()
+    if type(self.get_follow_state) == "function" then
+        return self.get_follow_state()
+    end
+    return "following"
+end
+
+function PlaybackDialog:_can_return()
+    return type(self.get_return_enabled) == "function"
+        and self.get_return_enabled() == true
+end
+
+function PlaybackDialog:onFollowStateChanged()
+    if self.is_open then
+        self:_refresh(true)
+    end
+end
+
 function PlaybackDialog:init()
     self.scheduler = self.scheduler or UIManager
     self.title = _("Read along")
@@ -69,7 +96,7 @@ function PlaybackDialog:init()
         math.min(Device.screen:getWidth(), Device.screen:getHeight()) * 0.72
     )
     self.status_text = TextBoxWidget:new{
-        text = _("Ready") .. "\n— / —",
+        text = state_label("idle", self:_get_follow_state()) .. "\n— / —",
         width = status_width,
         alignment = "center",
         face = Font:getFace("smallinfofont"),
@@ -102,6 +129,10 @@ function PlaybackDialog:init()
             callback = function()
                 self:_run(function()
                     return self.coordinator:startHere()
+                end, function()
+                    if type(self.on_start) == "function" then
+                        self.on_start()
+                    end
                 end)
             end,
         },
@@ -116,6 +147,10 @@ function PlaybackDialog:init()
             callback = function()
                 self:_run(function()
                     return self.coordinator:resumeSaved()
+                end, function()
+                    if type(self.on_start) == "function" then
+                        self.on_start()
+                    end
                 end)
             end,
         })
@@ -131,6 +166,10 @@ function PlaybackDialog:init()
             callback = function()
                 self:_run(function()
                     return self.coordinator:startOver()
+                end, function()
+                    if type(self.on_start) == "function" then
+                        self.on_start()
+                    end
                 end)
             end,
         }
@@ -156,8 +195,15 @@ function PlaybackDialog:init()
                     return self.coordinator:isActionEnabled()
                 end,
                 callback = function()
+                    local state_before = self.coordinator:getState()
                     self:_run(function()
                         return self.coordinator:toggle()
+                    end, function()
+                        if state_before == "idle" or state_before == "ended" then
+                            if type(self.on_start) == "function" then
+                                self.on_start()
+                            end
+                        end
                     end)
                 end,
             },
@@ -182,6 +228,10 @@ function PlaybackDialog:init()
                 callback = function()
                     self:_run(function()
                         return self.coordinator:stop()
+                    end, function()
+                        if type(self.on_stop) == "function" then
+                            self.on_stop()
+                        end
                     end)
                 end,
             },
@@ -193,6 +243,23 @@ function PlaybackDialog:init()
             },
         },
         start_choices,
+        {
+            {
+                id = "return_to_narration",
+                text = _("Return to narration"),
+                enabled_func = function()
+                    return self:_can_return()
+                end,
+                callback = function()
+                    self:_run(function()
+                        if type(self.on_return) ~= "function" then
+                            return nil, _("There is no current narrated text to return to")
+                        end
+                        return self.on_return()
+                    end)
+                end,
+            },
+        },
     }
 
     self.refresh_action = function()
@@ -207,8 +274,11 @@ function PlaybackDialog:init()
     ButtonDialog.init(self)
 end
 
-function PlaybackDialog:_run(action)
+function PlaybackDialog:_run(action, on_success)
     local ok, error_message, error_reported = action()
+    if ok and type(on_success) == "function" then
+        on_success()
+    end
     if not ok and not error_reported
         and self.coordinator:getState() ~= "error"
         and type(self.on_error) == "function" then
@@ -237,7 +307,7 @@ function PlaybackDialog:_refresh(full_refresh)
     local duration = status.duration
     self.status_text:setText(string.format(
         "%s\n%s / %s",
-        state_label(status.state),
+        state_label(status.state, self:_get_follow_state()),
         format_time(position),
         format_time(duration)
     ))
