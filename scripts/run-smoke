@@ -44,7 +44,7 @@ for audio_name in ("first.wav", "second.wav"):
         audio.setnchannels(1)
         audio.setsampwidth(2)
         audio.setframerate(8000)
-        audio.writeframes(b"\0\0" * 8000)
+        audio.writeframes(b"\0\0" * 16000)
 
 files = {
     "mimetype": "application/epub+zip",
@@ -70,7 +70,7 @@ files = {
 """,
     "book/first.smil": """<?xml version="1.0" encoding="UTF-8"?>
 <smil xmlns="http://www.w3.org/ns/SMIL"><body><seq>
-  <par><text src="first.xhtml#first-sentence"/><audio src="first.wav" clipBegin="0s" clipEnd="1s"/></par>
+  <par><text src="first.xhtml#first-sentence"/><audio src="first.wav" clipBegin="0s" clipEnd="2s"/></par>
 </seq></body></smil>
 """,
     "book/second.xhtml": """<?xml version="1.0" encoding="UTF-8"?>
@@ -78,7 +78,7 @@ files = {
 """,
     "book/second.smil": """<?xml version="1.0" encoding="UTF-8"?>
 <smil xmlns="http://www.w3.org/ns/SMIL"><body><seq>
-  <par><text src="second.xhtml#second-sentence"/><audio src="second.wav" clipBegin="0s" clipEnd="1s"/></par>
+  <par><text src="second.xhtml#second-sentence"/><audio src="second.wav" clipBegin="0s" clipEnd="2s"/></par>
 </seq></body></smil>
 """,
 }
@@ -118,6 +118,7 @@ local MpvAudio = require("mpvaudio")
 local MpvProcess = require("mpvprocess")
 local Event = require("ui/event")
 local UIManager = require("ui/uimanager")
+local Screen = require("device").screen
 local logger = require("logger")
 
 local Smoke = WidgetContainer:extend{
@@ -128,6 +129,10 @@ local Smoke = WidgetContainer:extend{
 local coordinator
 local playback_dialog
 local quit_scheduled = false
+local follow_state = "following"
+local latest_range
+local automatic_gotos = 0
+local screenshot_dir = os.getenv("KOREADALONG_SMOKE_SCREENSHOT_DIR")
 
 local function fail(message)
     if quit_scheduled then
@@ -149,6 +154,26 @@ end
 
 local function exists(path)
     return os.rename(path, path) ~= nil
+end
+
+local function take_screenshot(name)
+    if not screenshot_dir then
+        return
+    end
+    local path = screenshot_dir .. "/" .. name .. ".png"
+    local ok, error_message = pcall(function()
+        Screen:shot(path)
+    end)
+    if not ok then
+        fail("screenshot failed: " .. tostring(error_message))
+    end
+end
+
+local function refresh_follow_state()
+    if playback_dialog
+        and type(playback_dialog.onFollowStateChanged) == "function" then
+        playback_dialog:onFollowStateChanged()
+    end
 end
 
 function Smoke:onReaderReady()
@@ -199,8 +224,20 @@ function Smoke:onReaderReady()
         overlay = overlay,
         clips = clips,
         on_range = function(pos0, pos1)
+            local had_range = latest_range ~= nil
+            latest_range = {
+                pos0 = pos0,
+                pos1 = pos1,
+            }
+            if follow_state == "browsing" and not had_range then
+                refresh_follow_state()
+            end
+            if follow_state ~= "following" then
+                return
+            end
             if not self.document:isXPointerInCurrentPage(pos0)
                 and not self.document:isXPointerInCurrentPage(pos1) then
+                automatic_gotos = automatic_gotos + 1
                 self.ui:handleEvent(Event:new("GotoXPointer", pos0))
                 overlay:refresh()
             end
@@ -222,6 +259,24 @@ function Smoke:onReaderReady()
     playback_dialog = PlaybackDialog:new{
         coordinator = coordinator,
         scheduler = UIManager,
+        get_follow_state = function()
+            return follow_state
+        end,
+        get_return_enabled = function()
+            return follow_state == "browsing"
+                and latest_range ~= nil
+        end,
+        on_return = function()
+            if not latest_range then
+                return nil, "no active smoke narration range"
+            end
+            local range = latest_range
+            follow_state = "following"
+            refresh_follow_state()
+            self.ui:handleEvent(Event:new("GotoXPointer", range.pos0))
+            overlay:refresh()
+            return true
+        end,
         on_error = function(error_message)
             fail("playback dialog error: " .. tostring(error_message))
         end,
@@ -244,6 +299,59 @@ function Smoke:onReaderReady()
 
     local navigation_attempts = 0
     local eof_attempts = 0
+    local browse_started = false
+    local browse_scheduled = false
+    local browse_returned = false
+    local gotos_before_browse = 0
+
+    local function return_to_narration()
+        if not latest_range then
+            fail("browse scenario lost its latest range")
+            return
+        end
+        if automatic_gotos ~= gotos_before_browse then
+            fail("narration snapped back while browsing")
+            return
+        end
+        logger.info("SMOKE_BROWSE state=browsing snap_back=false")
+        local returned, return_error = playback_dialog.on_return()
+        if not returned then
+            fail("return to narration failed: " .. tostring(return_error))
+            return
+        end
+        browse_returned = true
+        UIManager:scheduleIn(0.1, function()
+            take_screenshot("browsing-return")
+            UIManager:scheduleIn(0.1, function()
+                take_screenshot("following-after-return")
+            end)
+        end)
+        logger.info("SMOKE_RETURN state=" .. follow_state .. " range_retained=true")
+    end
+
+    local function browse_away()
+        if browse_started or quit_scheduled then
+            return
+        end
+        browse_started = true
+        gotos_before_browse = automatic_gotos
+        follow_state = "browsing"
+        refresh_follow_state()
+        local second_range, second_error = FragmentResolver.resolve(
+            self.document,
+            clips[2]
+        )
+        if not second_range then
+            fail("browse target resolve failed: " .. tostring(second_error))
+            return
+        end
+        self.ui:handleEvent(Event:new("GotoXPointer", second_range.pos0))
+        UIManager:scheduleIn(0.05, function()
+            take_screenshot("browsing")
+        end)
+        UIManager:scheduleIn(0.25, return_to_narration)
+    end
+
     local function check_eof()
         eof_attempts = eof_attempts + 1
         if coordinator:getState() == "ended" then
@@ -289,6 +397,16 @@ function Smoke:onReaderReady()
     local function check_navigation()
         navigation_attempts = navigation_attempts + 1
         local status = adapter:getStatus()
+        if not browse_started and not browse_scheduled
+            and coordinator.current_clip_index == 1
+            and coordinator.range_cache[1]
+            and status.state == "playing" then
+            browse_scheduled = true
+            UIManager:scheduleIn(0.2, function()
+                take_screenshot("following")
+            end)
+            UIManager:scheduleIn(0.45, browse_away)
+        end
         if coordinator.current_clip_index == 2
             and coordinator.range_cache[2]
             and status.state == "playing" then
@@ -301,6 +419,14 @@ function Smoke:onReaderReady()
                 fail("expected visible second-chapter underline")
                 return
             end
+            if not browse_returned then
+                fail("expected return to narration before chapter transition")
+                return
+            end
+            if automatic_gotos <= gotos_before_browse then
+                fail("expected following after return to navigate chapter two")
+                return
+            end
             logger.info("SMOKE_PLAYBACK state=" .. status.state
                 .. " position=" .. tostring(status.position)
                 .. " range_cache=true audio=book/second.wav")
@@ -308,7 +434,7 @@ function Smoke:onReaderReady()
             UIManager:scheduleIn(0.2, check_eof)
             return
         end
-        if navigation_attempts >= 20 then
+        if navigation_attempts >= 40 then
             fail("expected transition to second chapter; coordinator="
                 .. coordinator:getState() .. " audio=" .. status.state
                 .. " clip=" .. tostring(coordinator.current_clip_index))
@@ -338,6 +464,8 @@ fi
 grep -F "SMOKE_RESOLVE ok=true" "$run_log" >/dev/null
 grep -F "SMOKE_PLAYBACK state=playing" "$run_log" >/dev/null
 grep -F "SMOKE_NAVIGATION chapter=2 range_visible=true" "$run_log" >/dev/null
+grep -F "SMOKE_BROWSE state=browsing snap_back=false" "$run_log" >/dev/null
+grep -F "SMOKE_RETURN state=following range_retained=true" "$run_log" >/dev/null
 grep -F "SMOKE_EOF state=ended audio_removed=true" "$run_log" >/dev/null
 grep -F "SMOKE_CLOSE audio_dir_gone=true coordinator_state=closed" "$run_log" >/dev/null
 grep -F "SMOKE_CLEANUP mpv_done=true mpv_dir_gone=true" "$run_log" >/dev/null
