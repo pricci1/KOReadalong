@@ -661,6 +661,17 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal("selected-start", goto_events[1].args[1])
     end)
 
+    it("does not carry the start control input into Following navigation", function()
+        plugin:onReaderReady()
+        ui_manager.event_hook:execute("InputEvent")
+        assert.is_true(plugin.input_pending)
+
+        plugin:_begin_following()
+
+        assert.is_false(plugin.input_pending)
+        assert.is_nil(plugin.input_expiry_action)
+    end)
+
     it("closes the transient selection and reports jump errors", function()
         plugin:onReaderReady()
         highlight.selected_text = {

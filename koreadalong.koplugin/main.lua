@@ -180,6 +180,11 @@ function KoReadalong:_begin_following()
     self:_cancel_navigation_guard()
     self:_cancel_navigation_candidate()
     self:_clear_render_suppression()
+    self.input_pending = false
+    if self.input_expiry_action and type(UIManager.unschedule) == "function" then
+        UIManager:unschedule(self.input_expiry_action)
+    end
+    self.input_expiry_action = nil
     self.latest_range = nil
     self:_set_follow_state(FOLLOWING)
 end
