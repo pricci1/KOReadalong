@@ -275,6 +275,7 @@ local function make_fixture(clips, options)
     local timeline = assert(Timeline.new(clips))
     local errors = {}
     local ranges_shown = {}
+    local ranges_cleared = {}
     local get_current_xpointer = options.get_current_xpointer
     if not get_current_xpointer and options.current_xpointer ~= nil then
         get_current_xpointer = function()
@@ -298,12 +299,15 @@ local function make_fixture(clips, options)
         on_range = function(pos0, pos1)
             ranges_shown[#ranges_shown + 1] = { pos0, pos1 }
         end,
+        on_range_cleared = function(reason)
+            ranges_cleared[#ranges_cleared + 1] = reason
+        end,
         on_error = function(error_message)
             errors[#errors + 1] = error_message
         end,
     }
     return coordinator, scheduler, adapter, materializer, resolver, overlay, errors,
-        ranges_shown
+        ranges_shown, ranges_cleared
 end
 
 local function clips_fixture()
@@ -806,14 +810,19 @@ describe("playback coordinator", function()
         scheduler:fire_any()
         assert.are.equal("pos0-two", overlay.ranges[#overlay.ranges][1])
         assert.are.same({ "pos0-two", "pos1-two" }, ranges_shown[#ranges_shown])
+        assert.are.same({ pos0 = "pos0-two", pos1 = "pos1-two" },
+            coordinator:getCurrentRange())
         assert.are.equal(calls_after_one + 1, #resolver.calls)
 
         adapter.position = 2.1
         scheduler:fire_any()
         assert.is_true(overlay.clears > 0)
+        assert.is_nil(coordinator:getCurrentRange())
         adapter.position = 1.4
         scheduler:fire_any()
         assert.are.equal(calls_after_one + 1, #resolver.calls)
+        assert.are.same({ pos0 = "pos0-two", pos1 = "pos1-two" },
+            coordinator:getCurrentRange())
     end)
 
     it("reports playback progress and seeks relative to the observed position", function()

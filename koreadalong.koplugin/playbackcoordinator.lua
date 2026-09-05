@@ -114,6 +114,7 @@ function PlaybackCoordinator.new(options)
         document = options.document,
         overlay = options.overlay,
         on_range = options.on_range,
+        on_range_cleared = options.on_range_cleared,
         on_error = options.on_error,
         clips = clips,
         state = PlaybackCoordinator.STATES.IDLE,
@@ -140,6 +141,7 @@ function PlaybackCoordinator.new(options)
         cleanup_pending = false,
         transition = nil,
         stop_issued = false,
+        current_range = nil,
         poll_interval = options.poll_interval or POLL_INTERVAL,
     }, PlaybackCoordinator)
 
@@ -248,15 +250,33 @@ function PlaybackCoordinator:_unschedule_poll()
     self.scheduled_generation = nil
 end
 
-function PlaybackCoordinator:_clear_overlay()
+function PlaybackCoordinator:_clear_overlay(reason)
+    self.current_range = nil
     invoke_optional(self.overlay, "clear")
+    if type(self.on_range_cleared) == "function" then
+        pcall(self.on_range_cleared, reason)
+    end
 end
 
 function PlaybackCoordinator:_show_range(range)
+    self.current_range = {
+        pos0 = range.pos0,
+        pos1 = range.pos1,
+    }
     invoke_optional(self.overlay, "setRange", range.pos0, range.pos1)
     if type(self.on_range) == "function" then
         pcall(self.on_range, range.pos0, range.pos1)
     end
+end
+
+function PlaybackCoordinator:getCurrentRange()
+    if not self.current_range then
+        return nil
+    end
+    return {
+        pos0 = self.current_range.pos0,
+        pos1 = self.current_range.pos1,
+    }
 end
 
 function PlaybackCoordinator:_remove_materialized_audio()
@@ -330,7 +350,7 @@ function PlaybackCoordinator:_fail(error_message, skip_stop)
             self.cleanup_pending = true
         end
     else
-        self:_clear_overlay()
+        self:_clear_overlay("error")
     end
     self.stop_issued = false
     if recoverable and not self.cleanup_pending and not self.cleanup_error then
@@ -339,7 +359,7 @@ function PlaybackCoordinator:_fail(error_message, skip_stop)
         -- retry this document without reopening it.
         self.current_clip_index = nil
         self.state = PlaybackCoordinator.STATES.IDLE
-        self:_clear_overlay()
+        self:_clear_overlay("error")
     else
         self.state = PlaybackCoordinator.STATES.ERROR
     end
@@ -395,7 +415,7 @@ end
 function PlaybackCoordinator:_resolve_range(index)
     local range = self:_get_range(index)
     if not range then
-        self:_clear_overlay()
+        self:_clear_overlay("gap")
         return nil
     end
     self:_show_range(range)
@@ -644,7 +664,7 @@ function PlaybackCoordinator:_update_overlay(audio_path, position)
     local clip = self.timeline:lookup(audio_path, position)
     local index = clip and self.clip_indexes[clip]
     if not index then
-        self:_clear_overlay()
+        self:_clear_overlay("gap")
         return
     end
     local changed = self.current_clip_index ~= index
@@ -661,14 +681,14 @@ function PlaybackCoordinator:_prepare_resource(index, initial_position)
         self.state = PlaybackCoordinator.STATES.ENDED
         self.intent = nil
         self:_unschedule_poll()
-        self:_clear_overlay()
+        self:_clear_overlay("resource")
         return true
     end
 
     if self.materialized_path or self.current_audio_path then
         return self:_fail("previous audio resource is still owned")
     else
-        self:_clear_overlay()
+        self:_clear_overlay("resource")
     end
     self.current_clip_index = index
     self.current_audio_path = clip.audio_path
@@ -750,7 +770,7 @@ function PlaybackCoordinator:_advance()
     local next_index = current_index + 1
     if not self.clips[next_index] then
         self.intent = nil
-        self:_clear_overlay()
+        self:_clear_overlay("ended")
         return self:_begin_stopping{
             kind = "ended",
         }
@@ -809,7 +829,7 @@ function PlaybackCoordinator:_finish_stopping(status)
         self.state = PlaybackCoordinator.STATES.ENDED
         self:_clear_saved_location()
         self:_unschedule_poll()
-        self:_clear_overlay()
+        self:_clear_overlay("ended")
         return true
     elseif transition.kind == "stop" then
         self.current_clip_index = nil
@@ -817,7 +837,7 @@ function PlaybackCoordinator:_finish_stopping(status)
         self.state = PlaybackCoordinator.STATES.IDLE
         self:_clear_saved_location()
         self:_unschedule_poll()
-        self:_clear_overlay()
+        self:_clear_overlay("stop")
         return true
     end
 
@@ -1106,7 +1126,7 @@ function PlaybackCoordinator:playFromXPointer(pos0, pos1)
         self.generation = self.generation + 1
         self:_unschedule_poll()
         self.intent = PlaybackCoordinator.STATES.PLAYING
-        self:_clear_overlay()
+        self:_clear_overlay("transition")
         return self:_begin_stopping{
             kind = "resource",
             next_index = index,
@@ -1144,7 +1164,7 @@ function PlaybackCoordinator:stop()
     self:_unschedule_poll()
     self.intent = nil
     self.error = nil
-    self:_clear_overlay()
+    self:_clear_overlay("stop")
     return self:_begin_stopping{
         kind = "stop",
     }
@@ -1188,7 +1208,7 @@ function PlaybackCoordinator:close()
         invoke_optional(self.adapter, "stop")
     end
     invoke_optional(self.adapter, "close")
-    self:_clear_overlay()
+    self:_clear_overlay("close")
     invoke_optional(self.overlay, "deactivate")
     local cleaned, cleanup_error = invoke(self.materializer, "cleanup")
     if cleaned then
