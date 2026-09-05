@@ -147,6 +147,7 @@ describe("KoReadalong lifecycle and menu", function()
             stop_count = 0,
             play_from_calls = {},
             can_jump = true,
+            current_range = nil,
         }
         function coordinator.new(options)
             coordinator.options = options
@@ -176,6 +177,9 @@ describe("KoReadalong lifecycle and menu", function()
             function instance:canPlayFromXPointer(pos0, pos1)
                 self.can_play_arguments = { pos0, pos1 }
                 return self.can_jump
+            end
+            function instance:getCurrentRange()
+                return self.current_range
             end
             function instance:playFromXPointer(pos0, pos1)
                 self.play_from_calls[#self.play_from_calls + 1] = { pos0, pos1 }
@@ -211,7 +215,46 @@ describe("KoReadalong lifecycle and menu", function()
         ui_manager = {
             shown = {},
             closed = {},
+            tasks = {},
+            event_hook = {
+                handlers = {},
+            },
         }
+        function ui_manager.event_hook:register(name, handler)
+            self.handlers[name] = self.handlers[name] or {}
+            self.handlers[name][handler] = true
+        end
+        function ui_manager.event_hook:unregister(name, handler)
+            if self.handlers[name] then
+                self.handlers[name][handler] = nil
+            end
+        end
+        function ui_manager.event_hook:execute(name)
+            for handler in pairs(self.handlers[name] or {}) do
+                handler()
+            end
+        end
+        function ui_manager:scheduleIn(_, action)
+            self.tasks[action] = true
+        end
+        function ui_manager:nextTick(action)
+            self.tasks[action] = true
+        end
+        function ui_manager:unschedule(action)
+            self.tasks[action] = nil
+        end
+        function ui_manager:fire(action)
+            if self.tasks[action] then
+                self.tasks[action] = nil
+                action()
+            end
+        end
+        function ui_manager:fire_next()
+            local action = next(self.tasks)
+            if action then
+                self:fire(action)
+            end
+        end
         function ui_manager:show(message)
             self.shown[#self.shown + 1] = message
         end
@@ -301,6 +344,12 @@ describe("KoReadalong lifecycle and menu", function()
                 getXPointer = function()
                     return current_xpointer
                 end,
+                getPageFromXPointer = function(_, pointer)
+                    return pointer == "narrated" and 1 or 2
+                end,
+                getPosFromXPointer = function(_, pointer)
+                    return pointer == "narrated" and 10 or 20
+                end,
                 isXPointerInCurrentPage = function()
                     return range_visible
                 end,
@@ -388,13 +437,19 @@ describe("KoReadalong lifecycle and menu", function()
 
     it("silently leaves ordinary documents untouched", function()
         overlays_available = false
-        assert.are.equal(1, dispatcher.register_count)
+        assert.are.equal(2, dispatcher.register_count)
         assert.are.same({
             category = "none",
             event = "ShowReadAlongControls",
             title = "KoReadalong: show playback controls",
             reader = true,
         }, dispatcher.actions.koreadalong_show_controls)
+        assert.are.same({
+            category = "none",
+            event = "ReturnToNarration",
+            title = "KoReadalong: return to narration",
+            reader = true,
+        }, dispatcher.actions.koreadalong_return_to_narration)
         assert.is_false(plugin:onShowReadAlongControls())
         plugin:onReaderReady()
         assert.is_nil(plugin.overlay)
@@ -488,6 +543,7 @@ describe("KoReadalong lifecycle and menu", function()
 
     it("shows the selection action only for usable XPointers and routes its callback", function()
         plugin:onReaderReady()
+        plugin:_set_browsing()
         highlight.selected_text = {
             pos0 = "word-start",
             pos1 = "word-end",
@@ -505,6 +561,7 @@ describe("KoReadalong lifecycle and menu", function()
             { "word-start", "word-end" },
         }, coordinator.play_from_calls)
         assert.are.equal(0, #ui_manager.shown)
+        assert.are.equal("following", plugin.follow_state)
 
         highlight.selected_text = {}
         action = highlight.buttons["12_read_from_here"](highlight)
@@ -589,5 +646,142 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal("GotoXPointer", goto_events[1].name)
         assert.are.equal("next-start", goto_events[1].args[1])
         assert.are.equal(1, overlay.refresh_count)
+    end)
+
+    it("suspends on a deliberate page turn while narration is playing", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        plugin.last_xpointer = current_xpointer
+        plugin.last_position_signature = "page:1:nil"
+
+        ui_manager.event_hook:execute("InputEvent")
+        current_xpointer = "manual-page"
+        plugin:onPageUpdate(2)
+        assert.are.equal("following", plugin.follow_state)
+        ui_manager:fire(plugin.navigation_candidate_action)
+        assert.are.equal("browsing", plugin.follow_state)
+    end)
+
+    it("keeps browsing after a paused manual jump and resume", function()
+        plugin:onReaderReady()
+        coordinator.state = "paused"
+        plugin.last_xpointer = current_xpointer
+        plugin.last_position_signature = "page:1:nil"
+
+        ui_manager.event_hook:execute("InputEvent")
+        current_xpointer = "paused-page"
+        plugin:onPageUpdate(2)
+        ui_manager:fire(plugin.navigation_candidate_action)
+        assert.are.equal("browsing", plugin.follow_state)
+
+        coordinator.state = "playing"
+        assert.are.equal("browsing", plugin.follow_state)
+    end)
+
+    it("classifies same-page TOC, search, and link jumps from input frames", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        current_xpointer = "narrated"
+        plugin.last_xpointer = current_xpointer
+        plugin.last_position_signature = "page:1:nil"
+
+        ui_manager.event_hook:execute("InputEvent")
+        plugin:onPageUpdate(1)
+        plugin:onPosUpdate(10, 1)
+        ui_manager:fire(plugin.navigation_candidate_action)
+        assert.are.equal("browsing", plugin.follow_state)
+    end)
+
+    it("does not classify its own goto or duplicate position events as browsing", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        range_visible = false
+        local on_range = plugin.coordinator.options.on_range
+        on_range("narrated", "narrated-end")
+        current_xpointer = "narrated"
+        plugin:onPageUpdate(1)
+        plugin:onPageUpdate(1)
+        plugin:onPosUpdate(10, 1)
+        assert.are.equal("following", plugin.follow_state)
+    end)
+
+    it("does not classify rerender, rotation, zoom, or font changes as browsing", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        current_xpointer = "narrated"
+        plugin.last_xpointer = current_xpointer
+        plugin.last_position_signature = "page:1:nil"
+
+        plugin:onSetDimensions()
+        plugin:onPageUpdate(2)
+        plugin:onDocumentRerendered()
+        plugin:onSetRotationMode()
+        plugin:onRotationUpdate()
+        plugin:onZoomUpdate()
+        plugin:onFontSizeUpdate()
+        assert.are.equal("following", plugin.follow_state)
+        assert.is_nil(plugin.navigation_candidate)
+    end)
+
+    it("returns to the latest range and resumes future following", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        range_visible = true
+        current_xpointer = "narrated"
+        plugin.coordinator.options.on_range("narrated", "narrated-end")
+        plugin.last_xpointer = current_xpointer
+        plugin.last_position_signature = "page:1:nil"
+
+        ui_manager.event_hook:execute("InputEvent")
+        current_xpointer = "manual-page"
+        plugin:onPageUpdate(2)
+        ui_manager:fire(plugin.navigation_candidate_action)
+        assert.is_true(plugin:canReturnToNarration())
+
+        local goto_count = #goto_events
+        range_visible = false
+        assert.is_true(plugin:returnToNarration())
+        assert.are.equal("following", plugin.follow_state)
+        assert.are.equal(goto_count + 1, #goto_events)
+        assert.are.equal("narrated", goto_events[#goto_events].args[1])
+
+        range_visible = false
+        plugin.coordinator.options.on_range("future", "future-end")
+        assert.are.equal(goto_count + 2, #goto_events)
+    end)
+
+    it("disables return and explains when no active range is available", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        plugin:_set_browsing()
+        plugin.latest_range = nil
+
+        assert.is_false(plugin:canReturnToNarration())
+        assert.is_nil(plugin:onReturnToNarration())
+        assert.are.equal(1, #ui_manager.shown)
+        assert.matches("no current narrated text", ui_manager.shown[1].text)
+    end)
+
+    it("resets transient navigation for stop, EOF, new start, and close", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        plugin.latest_range = { pos0 = "narrated", pos1 = "narrated-end" }
+        plugin:_set_browsing()
+        plugin.coordinator.options.on_range_cleared("stop")
+        assert.are.equal("following", plugin.follow_state)
+        assert.is_nil(plugin.latest_range)
+
+        plugin.latest_range = { pos0 = "narrated", pos1 = "narrated-end" }
+        plugin:_set_browsing()
+        plugin:_begin_following()
+        assert.are.equal("following", plugin.follow_state)
+        assert.is_nil(plugin.latest_range)
+
+        plugin.latest_range = { pos0 = "narrated", pos1 = "narrated-end" }
+        plugin:_set_browsing()
+        plugin:onCloseDocument()
+        assert.are.equal("following", plugin.follow_state)
+        assert.is_nil(plugin.latest_range)
+        assert.is_nil(next(ui_manager.event_hook.handlers.InputEvent))
     end)
 end)

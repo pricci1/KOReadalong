@@ -16,6 +16,12 @@ local _ = require("gettext")
 
 local KINAMP_MISSING_ERROR = "KinAMP daemon is not running; start KinAMP first"
 local KINAMP_BUSY_ERROR = "KinAMP is busy"
+local FOLLOWING = "following"
+local BROWSING = "browsing"
+local EXPECTED_NAVIGATION_SECONDS = 1
+local EXPECTED_NAVIGATION_EVENTS = 8
+local INPUT_NAVIGATION_SECONDS = 0.75
+local RENDER_SUPPRESSION_SECONDS = 0.75
 
 local KINAMP_STARTUP_HELP = _([[KinAMP isn’t running.
 
@@ -50,9 +56,20 @@ function KoReadalong:onDispatcherRegisterActions()
         title = _("KoReadalong: show playback controls"),
         reader = true,
     })
+    Dispatcher:registerAction("koreadalong_return_to_narration", {
+        category = "none",
+        event = "ReturnToNarration",
+        title = _("KoReadalong: return to narration"),
+        reader = true,
+    })
 end
 
 function KoReadalong:init()
+    self.follow_state = FOLLOWING
+    self.input_sequence = 0
+    self.input_pending = false
+    self.navigation_serial = 0
+    self.render_serial = 0
     self:onDispatcherRegisterActions()
 end
 
@@ -62,13 +79,386 @@ local function refresh_overlay(self)
     end
 end
 
-local function follow_range(self, pos0, pos1)
-    if self.document:isXPointerInCurrentPage(pos0)
-        or self.document:isXPointerInCurrentPage(pos1) then
+local function valid_xpointer(pointer)
+    return type(pointer) == "string" and pointer ~= ""
+end
+
+local function active_narration(self)
+    if not self.coordinator
+        or type(self.coordinator.getState) ~= "function" then
+        return false
+    end
+    local state = self.coordinator:getState()
+    return state == "playing" or state == "paused"
+end
+
+local function current_xpointer(self)
+    if not self.document or type(self.document.getXPointer) ~= "function" then
+        return nil
+    end
+    local ok, pointer = pcall(self.document.getXPointer, self.document)
+    if ok and valid_xpointer(pointer) then
+        return pointer
+    end
+    return nil
+end
+
+local function pointer_visible(self, pointer)
+    if not valid_xpointer(pointer)
+        or not self.document
+        or type(self.document.isXPointerInCurrentPage) ~= "function" then
+        return false
+    end
+    local ok, visible = pcall(
+        self.document.isXPointerInCurrentPage,
+        self.document,
+        pointer
+    )
+    return ok and visible == true
+end
+
+function KoReadalong:_cancel_navigation_guard()
+    if self.expected_navigation_action and type(UIManager.unschedule) == "function" then
+        UIManager:unschedule(self.expected_navigation_action)
+    end
+    self.expected_navigation = nil
+    self.expected_navigation_action = nil
+end
+
+function KoReadalong:_cancel_navigation_candidate()
+    if self.navigation_candidate_action and type(UIManager.unschedule) == "function" then
+        UIManager:unschedule(self.navigation_candidate_action)
+    end
+    self.navigation_candidate = nil
+    self.navigation_candidate_action = nil
+end
+
+function KoReadalong:_clear_render_suppression()
+    if self.render_action and type(UIManager.unschedule) == "function" then
+        UIManager:unschedule(self.render_action)
+    end
+    self.render_action = nil
+    self.rendering = nil
+end
+
+function KoReadalong:_set_follow_state(state)
+    if self.follow_state == state then
         return
     end
+    self.follow_state = state
+    if self.playback_dialog
+        and type(self.playback_dialog.onFollowStateChanged) == "function" then
+        self.playback_dialog:onFollowStateChanged()
+    end
+end
+
+function KoReadalong:_reset_navigation()
+    self:_cancel_navigation_guard()
+    self:_cancel_navigation_candidate()
+    self:_clear_render_suppression()
+    if self.input_expiry_action and type(UIManager.unschedule) == "function" then
+        UIManager:unschedule(self.input_expiry_action)
+    end
+    self.input_expiry_action = nil
+    self.latest_range = nil
+    self.input_pending = false
+    self.last_xpointer = current_xpointer(self)
+    self.last_position_signature = nil
+    self:_set_follow_state(FOLLOWING)
+end
+
+function KoReadalong:_begin_following()
+    self:_cancel_navigation_guard()
+    self:_cancel_navigation_candidate()
+    self:_clear_render_suppression()
+    self.latest_range = nil
+    self:_set_follow_state(FOLLOWING)
+end
+
+function KoReadalong:_set_browsing()
+    self:_cancel_navigation_candidate()
+    self:_cancel_navigation_guard()
+    self.input_pending = false
+    if self.input_expiry_action and type(UIManager.unschedule) == "function" then
+        UIManager:unschedule(self.input_expiry_action)
+    end
+    self.input_expiry_action = nil
+    self:_set_follow_state(BROWSING)
+end
+
+function KoReadalong:_schedule_input_expiry(sequence)
+    if self.input_expiry_action and type(UIManager.unschedule) == "function" then
+        UIManager:unschedule(self.input_expiry_action)
+    end
+    self.input_expiry_action = function()
+        if self.input_sequence == sequence then
+            self.input_pending = false
+            self.input_expiry_action = nil
+        end
+    end
+    if type(UIManager.scheduleIn) == "function" then
+        UIManager:scheduleIn(INPUT_NAVIGATION_SECONDS, self.input_expiry_action)
+    end
+end
+
+function KoReadalong:_onInputFrame()
+    self.input_sequence = self.input_sequence + 1
+    self.input_pending = true
+    self:_schedule_input_expiry(self.input_sequence)
+end
+
+function KoReadalong:_register_input_hook()
+    local event_hook = UIManager.event_hook
+    if not event_hook or type(event_hook.register) ~= "function" then
+        return
+    end
+    self.input_hook = function()
+        self:_onInputFrame()
+    end
+    event_hook:register("InputEvent", self.input_hook)
+end
+
+function KoReadalong:_unregister_input_hook()
+    local event_hook = UIManager.event_hook
+    if self.input_hook and event_hook and type(event_hook.unregister) == "function" then
+        event_hook:unregister("InputEvent", self.input_hook)
+    end
+    self.input_hook = nil
+end
+
+function KoReadalong:_expect_navigation(pointer)
+    self:_cancel_navigation_guard()
+    self.navigation_serial = self.navigation_serial + 1
+    local guard = {
+        pointer = pointer,
+        input_sequence = self.input_sequence,
+        remaining = EXPECTED_NAVIGATION_EVENTS,
+        serial = self.navigation_serial,
+    }
+    if self.document then
+        if type(self.document.getPageFromXPointer) == "function" then
+            local ok, page = pcall(
+                self.document.getPageFromXPointer,
+                self.document,
+                pointer
+            )
+            if ok and type(page) == "number" then
+                guard.page = page
+            end
+        end
+        if type(self.document.getPosFromXPointer) == "function" then
+            local ok, position = pcall(
+                self.document.getPosFromXPointer,
+                self.document,
+                pointer
+            )
+            if ok and type(position) == "number" then
+                guard.position = position
+            end
+        end
+    end
+    self.expected_navigation = guard
+    self.expected_navigation_action = function()
+        if self.expected_navigation == guard then
+            self.expected_navigation = nil
+            self.expected_navigation_action = nil
+        end
+    end
+    if type(UIManager.scheduleIn) == "function" then
+        UIManager:scheduleIn(
+            EXPECTED_NAVIGATION_SECONDS,
+            self.expected_navigation_action
+        )
+    end
+end
+
+local function close_enough(left, right)
+    return type(left) == "number" and type(right) == "number"
+        and math.abs(left - right) <= 1
+end
+
+function KoReadalong:_expected_navigation_matches(kind, value)
+    local guard = self.expected_navigation
+    if not guard then
+        return false
+    end
+    if guard.input_sequence ~= self.input_sequence then
+        self:_cancel_navigation_guard()
+        return false
+    end
+    local matches = false
+    if kind == "page" then
+        matches = guard.page ~= nil and value == guard.page
+    elseif kind == "position" then
+        matches = close_enough(value, guard.position)
+    end
+    matches = matches or pointer_visible(self, guard.pointer)
+    if not matches then
+        self:_cancel_navigation_guard()
+        return false
+    end
+    guard.remaining = guard.remaining - 1
+    if guard.remaining <= 0 then
+        self:_cancel_navigation_guard()
+    end
+    self.input_pending = false
+    return true
+end
+
+function KoReadalong:_schedule_browse_candidate(
+    kind,
+    value,
+    signature,
+    logical_changed,
+    pointer
+)
+    if self.follow_state ~= FOLLOWING or not active_narration(self) then
+        return
+    end
+    pointer = pointer or current_xpointer(self)
+    local input_navigation = self.input_pending
+    if not logical_changed and not input_navigation then
+        return
+    end
+    self.navigation_serial = self.navigation_serial + 1
+    local serial = self.navigation_serial
+    self.navigation_candidate = {
+        kind = kind,
+        value = value,
+        signature = signature,
+        pointer = pointer,
+        logical_changed = logical_changed,
+        input_navigation = input_navigation,
+        serial = serial,
+    }
+    self.navigation_candidate_action = function()
+        local candidate = self.navigation_candidate
+        if not candidate or candidate.serial ~= serial then
+            return
+        end
+        self.navigation_candidate = nil
+        self.navigation_candidate_action = nil
+        if self.follow_state ~= FOLLOWING or not active_narration(self) then
+            return
+        end
+        if self.rendering and candidate.pointer == self.rendering.pointer then
+            return
+        end
+        if candidate.logical_changed or candidate.input_navigation then
+            self:_set_browsing()
+        end
+    end
+    if type(UIManager.nextTick) == "function" then
+        UIManager:nextTick(self.navigation_candidate_action)
+    else
+        self.navigation_candidate_action()
+    end
+end
+
+function KoReadalong:_observe_position(kind, value, second_value)
+    local signature = kind .. ":" .. tostring(value) .. ":" .. tostring(second_value)
+    local expected = self:_expected_navigation_matches(kind, value)
+    local pointer = current_xpointer(self)
+    local logical_changed = pointer ~= self.last_xpointer
+    local changed_signature = signature ~= self.last_position_signature
+    logical_changed = logical_changed or changed_signature
+    self.last_xpointer = pointer
+    self.last_position_signature = signature
+    if not expected then
+        self:_schedule_browse_candidate(
+            kind,
+            value,
+            signature,
+            logical_changed,
+            pointer
+        )
+    elseif changed_signature then
+        self.input_pending = false
+    end
+end
+
+function KoReadalong:_mark_rendering()
+    self:_cancel_navigation_candidate()
+    self.render_serial = self.render_serial + 1
+    local serial = self.render_serial
+    self.rendering = {
+        pointer = current_xpointer(self),
+        serial = serial,
+    }
+    if self.render_action and type(UIManager.unschedule) == "function" then
+        UIManager:unschedule(self.render_action)
+    end
+    self.render_action = function()
+        if self.rendering and self.rendering.serial == serial then
+            self.rendering = nil
+            self.render_action = nil
+        end
+    end
+    if type(UIManager.scheduleIn) == "function" then
+        UIManager:scheduleIn(RENDER_SUPPRESSION_SECONDS, self.render_action)
+    end
+end
+
+function KoReadalong:_follow_range(pos0, pos1)
+    if pointer_visible(self, pos0) or pointer_visible(self, pos1) then
+        return
+    end
+    self:_expect_navigation(pos0)
     self.ui:handleEvent(Event:new("GotoXPointer", pos0))
     refresh_overlay(self)
+end
+
+function KoReadalong:_latest_range()
+    if type(self.latest_range) == "table"
+        and valid_xpointer(self.latest_range.pos0)
+        and valid_xpointer(self.latest_range.pos1) then
+        return {
+            pos0 = self.latest_range.pos0,
+            pos1 = self.latest_range.pos1,
+        }
+    end
+    if self.coordinator and type(self.coordinator.getCurrentRange) == "function" then
+        local ok, range = pcall(self.coordinator.getCurrentRange, self.coordinator)
+        if ok and type(range) == "table"
+            and valid_xpointer(range.pos0)
+            and valid_xpointer(range.pos1) then
+            return {
+                pos0 = range.pos0,
+                pos1 = range.pos1,
+            }
+        end
+    end
+    return nil
+end
+
+function KoReadalong:canReturnToNarration()
+    return self.follow_state == BROWSING
+        and active_narration(self)
+        and self:_latest_range() ~= nil
+end
+
+function KoReadalong:returnToNarration()
+    if not active_narration(self) then
+        return nil, _("Narration is not active")
+    end
+    local range = self:_latest_range()
+    if not range then
+        return nil, _("There is no current narrated text to return to")
+    end
+    self:_expect_navigation(range.pos0)
+    self.ui:handleEvent(Event:new("GotoXPointer", range.pos0))
+    refresh_overlay(self)
+    self:_cancel_navigation_candidate()
+    self:_set_follow_state(FOLLOWING)
+    return true
+end
+
+function KoReadalong:onReturnToNarration()
+    local ok, error_message = self:returnToNarration()
+    if not ok and error_message then
+        self:_show_error(error_message)
+    end
+    return ok
 end
 
 local function selected_xpointers(highlight)
@@ -135,6 +525,21 @@ function KoReadalong:_show_playback_controls()
     self.playback_dialog = PlaybackDialog:new{
         coordinator = self.coordinator,
         scheduler = UIManager,
+        get_follow_state = function()
+            return self.follow_state
+        end,
+        get_return_enabled = function()
+            return self:canReturnToNarration()
+        end,
+        on_return = function()
+            return self:returnToNarration()
+        end,
+        on_start = function()
+            self:_begin_following()
+        end,
+        on_stop = function()
+            self:_reset_navigation()
+        end,
         on_error = function(error_message)
             self:_show_error(error_message)
         end,
@@ -206,6 +611,8 @@ function KoReadalong:_register_highlight_action()
                     if state ~= "error" then
                         self:_show_error(error_message)
                     end
+                else
+                    self:_begin_following()
                 end
             end,
         }
@@ -268,12 +675,28 @@ function KoReadalong:onReaderReady()
         overlay = self.overlay,
         clips = clips,
         on_range = function(pos0, pos1)
-            follow_range(self, pos0, pos1)
+            if valid_xpointer(pos0) and valid_xpointer(pos1) then
+                self.latest_range = {
+                    pos0 = pos0,
+                    pos1 = pos1,
+                }
+                self:_follow_range(pos0, pos1)
+            end
+        end,
+        on_range_cleared = function(reason)
+            self.latest_range = nil
+            if reason == "stop" or reason == "ended"
+                or reason == "close" or reason == "error" then
+                self:_reset_navigation()
+            end
         end,
         on_error = function(error_message)
+            self:_reset_navigation()
             self:_show_error(error_message)
         end,
     }
+    self.last_xpointer = current_xpointer(self)
+    self:_register_input_hook()
     self:_register_highlight_action()
     self.ui.menu:registerToMainMenu(self)
 end
@@ -297,45 +720,56 @@ function KoReadalong:addToMainMenu(menu_items)
     end
 end
 
-function KoReadalong:onPageUpdate()
+function KoReadalong:onPageUpdate(new_page)
+    self:_observe_position("page", new_page)
     refresh_overlay(self)
 end
 
-function KoReadalong:onPosUpdate()
+function KoReadalong:onPosUpdate(new_pos, new_page)
+    self:_observe_position("position", new_pos, new_page)
     refresh_overlay(self)
 end
 
 function KoReadalong:onDocumentRerendered()
+    self:_mark_rendering()
     refresh_overlay(self)
 end
 
 function KoReadalong:onSetDimensions()
+    self:_mark_rendering()
     refresh_overlay(self)
 end
 
 function KoReadalong:onSetRotationMode()
+    self:_mark_rendering()
     refresh_overlay(self)
 end
 
 function KoReadalong:onRotationUpdate()
+    self:_mark_rendering()
     refresh_overlay(self)
 end
 
 function KoReadalong:onZoomUpdate()
+    self:_mark_rendering()
     refresh_overlay(self)
 end
 
 function KoReadalong:onFontSizeUpdate()
+    self:_mark_rendering()
     refresh_overlay(self)
 end
 
 function KoReadalong:onDocumentPartiallyRerendered()
+    self:_mark_rendering()
     if self.overlay then
         self.overlay:invalidate()
     end
 end
 
 function KoReadalong:onCloseDocument()
+    self:_unregister_input_hook()
+    self:_reset_navigation()
     if self.playback_dialog then
         UIManager:close(self.playback_dialog)
         self.playback_dialog = nil
