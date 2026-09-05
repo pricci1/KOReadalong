@@ -13,6 +13,7 @@ describe("KoReadalong lifecycle and menu", function()
     local overlays_available
     local goto_events
     local range_visible
+    local current_xpointer
     local is_kindle
     local adapter_module_loads
     local mpv_adapter
@@ -42,6 +43,7 @@ describe("KoReadalong lifecycle and menu", function()
             "kindleaudio",
             "playbackcoordinator",
             "playbackdialog",
+            "narrationstate",
         } do
             package.loaded[module_name] = nil
         end
@@ -109,6 +111,7 @@ describe("KoReadalong lifecycle and menu", function()
         registered_menu_widget = nil
         goto_events = {}
         range_visible = true
+        current_xpointer = "/body/DocFragment[1]/body/p/text().0"
         is_kindle = false
         adapter_module_loads = {
             mpv = 0,
@@ -295,12 +298,16 @@ describe("KoReadalong lifecycle and menu", function()
             document = {
                 provider = "crengine",
                 getDocumentFileContent = function() return "bytes" end,
+                getXPointer = function()
+                    return current_xpointer
+                end,
                 isXPointerInCurrentPage = function()
                     return range_visible
                 end,
             },
             ui = {
                 highlight = highlight,
+                doc_settings = {},
                 handleEvent = function(_, event)
                     goto_events[#goto_events + 1] = event
                     range_visible = true
@@ -328,6 +335,7 @@ describe("KoReadalong lifecycle and menu", function()
             "kindleaudio",
             "playbackcoordinator",
             "playbackdialog",
+            "narrationstate",
             "ui/uimanager",
             "ui/event",
             "ui/widget/infomessage",
@@ -351,6 +359,17 @@ describe("KoReadalong lifecycle and menu", function()
         assert.is_not_nil(package.loaded["mpvaudio"])
         assert.is_nil(package.loaded["kindleaudio"])
         assert.are.equal(mpv_adapter, coordinator.options.adapter)
+    end)
+
+    it("wires the reader position and durable book state without autoplay", function()
+        plugin:onReaderReady()
+
+        assert.are.equal(current_xpointer, coordinator.options.get_current_xpointer())
+        assert.are.equal(
+            plugin.ui.doc_settings,
+            coordinator.options.state_store.settings
+        )
+        assert.are.equal("idle", coordinator:getState())
     end)
 
     it("lazily selects Kindle audio on Kindle devices", function()

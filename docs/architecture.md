@@ -30,8 +30,15 @@ KOReader reader ◀── XPointer/overlay adapter ◀── playback coordinato
 ```
 
 - **Media-overlay parser:** reads OPF/SMIL and returns platform-neutral clips. It must not depend on rendering or playback.
-- **Playback coordinator:** maps audio position to a clip with binary search, updates the active text target, and coordinates chapter/audio transitions.
+- **Playback coordinator:** maps audio position to a clip with binary search,
+  chooses the first valid target at or after a reader XPointer, validates and
+  resumes saved clip locations, updates the active text target, and coordinates
+  chapter/audio transitions.
 - **Reader adapter:** converts EPUB fragment IDs to CRe XPointers, derives current screen boxes, and paints ephemeral underlines. It recomputes boxes on page/position updates and document rerenders.
+- **Narration state store:** stores a content-identified clip, its XPointers,
+  and confirmed audio position in KOReader's per-book `DocSettings` sidecar.
+  It rejects changed clip timelines and is independent of annotations and
+  rendered screen geometry.
 - **Audio adapter:** exposes `open(path, { position = 0, paused = false })`,
   `setPaused`, `seek`, `stop`, `getStatus`, and `close`. Desktop and Kindle
   implementations must share this contract.
@@ -110,7 +117,13 @@ CSS, which would rerender on narration cadence.
 
 `koreadalong.koplugin/main.lua` is a document-only plugin. Expected lifecycle hooks are `onReaderReady`, `onPageUpdate`, `onPosUpdate`, `onDocumentRerendered`, and `onCloseDocument`.
 
-Dynamic read-along marks should be a registered reader view module with a `paintTo` method. Persisted highlights are intentionally avoided because narration state must not enter KOReader's annotations/bookmarks/export systems. Text anchors are stored as XPointers; rendered boxes are display-dependent cache entries only.
+The reader supplies `document:getXPointer()` to the coordinator when the user
+chooses **Start here**. The coordinator compares that logical position with
+resolved clip ranges, so page numbers, screen boxes, and transient rendering
+state do not affect start selection. Opening the document only constructs the
+coordinator; it never starts audio.
+
+Dynamic read-along marks should be a registered reader view module with a `paintTo` method. Persisted highlights are intentionally avoided because narration state must not enter KOReader's annotations/bookmarks/export systems. Text anchors are stored as XPointers; rendered boxes are display-dependent cache entries only. Confirmed narration state is stored separately in the book's `DocSettings` sidecar and is cleared when the user chooses **Stop**, **Start over**, or reaches EOF.
 
 ## Audio adapters
 

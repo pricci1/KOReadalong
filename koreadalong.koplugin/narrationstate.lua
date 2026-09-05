@@ -17,6 +17,13 @@ local function valid_string(value)
     return type(value) == "string" and value ~= ""
 end
 
+local function finite_number(value)
+    return type(value) == "number"
+        and value == value
+        and value ~= math.huge
+        and value ~= -math.huge
+end
+
 local function append_identity_field(parts, value)
     local encoded = tostring(value == nil and "" or value)
     parts[#parts + 1] = tostring(#encoded) .. ":" .. encoded
@@ -84,7 +91,7 @@ function NarrationState:load()
         or type(state.clip) ~= "table"
         or not valid_string(state.pos0)
         or not valid_string(state.pos1)
-        or type(state.position) ~= "number" then
+        or not finite_number(state.position) then
         return nil, "saved narration state does not match this EPUB"
     end
     for _, field in ipairs(IDENTITY_FIELDS) do
@@ -102,7 +109,7 @@ function NarrationState:save(location)
         or type(location.clip) ~= "table"
         or not valid_string(location.pos0)
         or not valid_string(location.pos1)
-        or type(location.position) ~= "number" then
+        or not finite_number(location.position) then
         return nil, "unable to save narration state"
     end
 

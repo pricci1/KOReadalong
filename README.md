@@ -119,10 +119,19 @@ sanitizes media paths and is suitable for attaching to a bug report. Use
 
 Open an EPUB containing EPUB 3 Media Overlays. Supported books gain a
 **Read along** panel with playback progress, 15-second seek buttons, and
-**Start**, **Pause/Resume**, **Stop**, and **Hide** controls. Books without media
-overlays are unaffected and do not show the menu. **Hide** hides the controls
-without interrupting narration; **Stop** stops narration and resets the session
-to the first clip.
+**Start here**, **Pause/Resume**, **Stop**, and **Hide** controls. Opening a book
+or the panel never starts audio automatically. **Start here** finds the first
+valid narrated segment at or after the reader's current logical position;
+**Stop** stops narration and resets the session to the first clip.
+
+After narration has confirmed a location, the panel also offers **Resume**,
+**Start here**, and **Start over**. **Resume** restores the saved clip and
+audio position after the book or KOReader has been closed. The saved value is
+kept in the book's KOReader settings sidecar as an EPUB clip identity and
+XPointers, never as screen coordinates or a reader annotation. If the EPUB,
+target clip, or saved XPointer no longer matches, KoReadalong discards the
+stale state and **Resume** falls back to the current-position start path.
+After narration reaches the end, **Start over** remains available for replay.
 
 ### Assign a gesture
 
@@ -138,7 +147,8 @@ book contains usable Media Overlays.
 
 While reading a supported book, hold a word and choose **Read from here** in
 KOReader's highlight dialog to start narration at that word's overlay segment.
-The selection is transient and is not saved as an annotation.
+This explicit XPointer selection overrides the current-position lookup. The
+selection is transient and is not saved as an annotation.
 
 The current MVP supports ordinary Storyteller-style SMIL targets using XHTML
 element IDs and follows narration onto the page containing the active target.

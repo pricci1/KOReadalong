@@ -512,28 +512,26 @@ function PlaybackCoordinator:_find_saved_location(saved)
             if not range then
                 return nil, "saved narration target is no longer valid"
             end
-            local saved_before_range_end
-            saved_before_range_end, compare_error = compare_xpointers(
+            local saved_start_matches, saved_start_error = compare_xpointers(
                 self.document,
                 saved.pos0,
+                range.pos0
+            )
+            if saved_start_matches == nil then
+                return nil, saved_start_error
+            end
+            local saved_end_matches, saved_end_error = compare_xpointers(
+                self.document,
+                saved.pos1,
                 range.pos1
             )
-            if not saved_before_range_end then
-                return nil, compare_error
+            if saved_end_matches == nil then
+                return nil, saved_end_error
             end
-            local range_before_saved_end
-            range_before_saved_end, compare_error = compare_xpointers(
-                self.document,
-                range.pos0,
-                saved.pos1
-            )
-            if not range_before_saved_end then
-                return nil, compare_error
-            end
-            if saved_before_range_end == 1 and range_before_saved_end == 1 then
+            if saved_start_matches == 0 and saved_end_matches == 0 then
                 return index, range
             end
-            return nil, "saved narration target no longer contains its XPointer"
+            return nil, "saved narration target no longer matches its XPointer range"
         end
     end
     return nil, "saved narration clip is no longer in this EPUB"
@@ -1026,6 +1024,20 @@ function PlaybackCoordinator:pause()
     self.state = PlaybackCoordinator.STATES.PAUSED
     self.intent = PlaybackCoordinator.STATES.PAUSED
     self:_unschedule_poll()
+    local status = invoke(self.adapter, "getStatus")
+    if type(status) == "table" and finite_number(status.position) then
+        self.playback_position = status.position
+        local clip = self.timeline:lookup(
+            self.current_audio_path,
+            self.playback_position
+        )
+        local index = clip and self.clip_indexes[clip]
+        if index and index ~= self.current_clip_index then
+            self:_update_overlay(self.current_audio_path, self.playback_position)
+        elseif index then
+            self.current_clip_index = index
+        end
+    end
     self:_confirm_location(self.current_clip_index, self.playback_position)
     return true
 end

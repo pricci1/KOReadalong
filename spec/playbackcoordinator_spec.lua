@@ -164,6 +164,35 @@ local function make_materializer()
     return materializer
 end
 
+local function make_state_store(saved)
+    local state_store = {
+        saved = saved,
+        loads = 0,
+        saves = {},
+        clears = 0,
+    }
+    function state_store:load()
+        self.loads = self.loads + 1
+        return self.saved
+    end
+    function state_store:save(location)
+        self.saves[#self.saves + 1] = location
+        self.saved = {
+            clip = location.clip,
+            pos0 = location.pos0,
+            pos1 = location.pos1,
+            position = location.position,
+        }
+        return true
+    end
+    function state_store:clear()
+        self.clears = self.clears + 1
+        self.saved = nil
+        return true
+    end
+    return state_store
+end
+
 local function mark_ready(adapter)
     adapter.duration = 2
     adapter.paused = adapter.open_options[#adapter.open_options].paused
@@ -189,7 +218,8 @@ local function make_overlay()
     return overlay
 end
 
-local function make_fixture(clips)
+local function make_fixture(clips, options)
+    options = options or {}
     local scheduler = make_scheduler()
     local adapter = make_adapter()
     local materializer = make_materializer()
@@ -234,9 +264,23 @@ local function make_fixture(clips)
         end
         return 0
     end
+    function document:isXPointerInDocument(pointer)
+        if type(pointer) ~= "string" then
+            return false
+        end
+        return tonumber(pointer:match("^p([0-9]+)$")) ~= nil
+            or pointer_positions[pointer] ~= nil
+            or pointer:match("^pos[01]%-") ~= nil
+    end
     local timeline = assert(Timeline.new(clips))
     local errors = {}
     local ranges_shown = {}
+    local get_current_xpointer = options.get_current_xpointer
+    if not get_current_xpointer and options.current_xpointer ~= nil then
+        get_current_xpointer = function()
+            return options.current_xpointer
+        end
+    end
     local coordinator = PlaybackCoordinator.new{
         adapter = adapter,
         scheduler = scheduler,
@@ -249,6 +293,8 @@ local function make_fixture(clips)
         document = document,
         overlay = overlay,
         clips = clips,
+        state_store = options.state_store,
+        get_current_xpointer = get_current_xpointer,
         on_range = function(pos0, pos1)
             ranges_shown[#ranges_shown + 1] = { pos0, pos1 }
         end,
@@ -289,6 +335,32 @@ local function clips_fixture()
     }
 end
 
+local function ranged_clips_fixture()
+    local clips = clips_fixture()
+    clips[1].range_pos0 = "p10"
+    clips[1].range_pos1 = "p20"
+    clips[1].range_start = 10
+    clips[1].range_end = 20
+    clips[2].range_pos0 = "p20"
+    clips[2].range_pos1 = "p30"
+    clips[2].range_start = 20
+    clips[2].range_end = 30
+    clips[3].range_pos0 = "p40"
+    clips[3].range_pos1 = "p50"
+    clips[3].range_start = 40
+    clips[3].range_end = 50
+    return clips
+end
+
+local function saved_location(clip, pos0, pos1, position)
+    return {
+        clip = clip,
+        pos0 = pos0,
+        pos1 = pos1,
+        position = position,
+    }
+end
+
 describe("playback coordinator", function()
     it("does not touch dependencies for a document without overlays", function()
         local scheduler = make_scheduler()
@@ -325,6 +397,132 @@ describe("playback coordinator", function()
         assert.are.same({}, adapter.seeks)
         assert.are.equal(1, #resolver.calls)
         assert.are.equal("two", resolver.calls[1].next_clip.text_fragment)
+    end)
+
+    it("starts at the first valid narrated segment at or after the current position", function()
+        local clips = ranged_clips_fixture()
+        local coordinator, _, adapter = make_fixture(clips, {
+            current_xpointer = "p25",
+        })
+
+        local index, range = coordinator:findClipAtOrAfterXPointer("p25")
+        assert.are.equal(2, index)
+        assert.are.same({ "p20", "p30" }, { range.pos0, range.pos1 })
+
+        assert.is_true(coordinator:startHere())
+        assert.are.equal(2, coordinator.current_clip_index)
+        assert.are.same({ position = 1, paused = false }, adapter.open_options[1])
+    end)
+
+    it("skips unsupported segments and crosses chapter and audio-resource boundaries", function()
+        local clips = ranged_clips_fixture()
+        local coordinator, _, adapter, _, resolver = make_fixture(clips, {
+            current_xpointer = "p15",
+        })
+        resolver.fail.one = true
+
+        assert.is_true(coordinator:startHere())
+        assert.are.equal(2, coordinator.current_clip_index)
+        assert.are.same({ position = 1, paused = false }, adapter.open_options[1])
+
+        local second_coordinator, _, second_adapter = make_fixture(ranged_clips_fixture(), {
+            current_xpointer = "p35",
+        })
+        assert.is_true(second_coordinator:startHere())
+        assert.are.equal(3, second_coordinator.current_clip_index)
+        assert.are.same({ position = 0.25, paused = false },
+            second_adapter.open_options[1])
+    end)
+
+    it("validates a saved clip and resumes at its confirmed audio position", function()
+        local clips = ranged_clips_fixture()
+        local store = make_state_store(saved_location(clips[2], "p20", "p30", 1.5))
+        local coordinator, scheduler, adapter = make_fixture(clips, {
+            state_store = store,
+        })
+
+        assert.is_true(coordinator:canResume())
+        assert.are.equal(2, coordinator:getResumeLocation().index)
+        assert.is_true(coordinator:resumeSaved())
+        assert.are.same({ position = 1.5, paused = false }, adapter.open_options[1])
+        mark_ready(adapter)
+        scheduler:fire_any()
+        assert.are.equal(1, #store.saves)
+        assert.are.equal("p20", store.saves[1].pos0)
+    end)
+
+    it("falls back to the current position when a saved target is invalid", function()
+        local clips = ranged_clips_fixture()
+        local store = make_state_store(saved_location(clips[2], "p999", "p1000", 1.5))
+        local coordinator, _, adapter = make_fixture(clips, {
+            current_xpointer = "p25",
+            state_store = store,
+        })
+
+        assert.is_false(coordinator:canResume())
+        assert.are.equal(1, store.clears)
+        assert.is_true(coordinator:resumeSaved())
+        assert.are.same({ position = 1, paused = false }, adapter.open_options[1])
+        assert.are.equal(2, coordinator.current_clip_index)
+    end)
+
+    it("rejects a saved target when the resolved XPointer range changed", function()
+        local store_clips = ranged_clips_fixture()
+        local store = make_state_store(saved_location(
+            store_clips[2],
+            "p20",
+            "p30",
+            1.5
+        ))
+        local changed_clips = ranged_clips_fixture()
+        changed_clips[2].range_pos0 = "p21"
+        changed_clips[2].range_pos1 = "p31"
+        changed_clips[2].range_start = 21
+        changed_clips[2].range_end = 31
+        local coordinator = make_fixture(changed_clips, {
+            state_store = store,
+        })
+
+        assert.is_false(coordinator:canResume())
+        assert.are.equal(1, store.clears)
+    end)
+
+    it("confirms the latest adapter position when pausing", function()
+        local store = make_state_store()
+        local coordinator, scheduler, adapter = make_fixture(ranged_clips_fixture(), {
+            state_store = store,
+        })
+        assert.is_true(coordinator:start())
+        mark_ready(adapter)
+        scheduler:fire_any()
+        adapter.position = 0.75
+
+        assert.is_true(coordinator:pause())
+        assert.are.equal(0.75, store.saved.position)
+    end)
+
+    it("persists a logical location across close and coordinator reopen", function()
+        local clips = ranged_clips_fixture()
+        local store = make_state_store()
+        local first, first_scheduler, first_adapter = make_fixture(clips, {
+            current_xpointer = "p0",
+            state_store = store,
+        })
+        assert.is_true(first:startHere())
+        mark_ready(first_adapter)
+        first_scheduler:fire_any()
+        first_adapter.position = 0.5
+        first_scheduler:fire_any()
+        assert.is_true(first:close())
+        assert.are.equal(0.5, store.saved.position)
+        assert.are.equal("p10", store.saved.pos0)
+
+        local second, _, second_adapter = make_fixture(clips, {
+            state_store = store,
+        })
+        assert.is_true(second:canResume())
+        assert.is_true(second:resumeSaved())
+        assert.are.same({ position = 0.5, paused = false }, second_adapter.open_options[1])
     end)
 
     it("finds the ordered segment containing a selected range with half-open boundaries", function()

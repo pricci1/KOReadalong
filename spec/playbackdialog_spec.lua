@@ -118,6 +118,10 @@ describe("playback dialog", function()
             seeks = {},
             toggle_count = 0,
             stop_count = 0,
+            start_here_count = 0,
+            resume_saved_count = 0,
+            start_over_count = 0,
+            has_resume = false,
         }
         function coordinator:getState()
             return self.state
@@ -135,6 +139,12 @@ describe("playback dialog", function()
         end
         function coordinator:isActionEnabled()
             return self.state ~= "loading" and self.state ~= "stopping"
+        end
+        function coordinator:canResume()
+            return self.has_resume and self.state == "idle"
+        end
+        function coordinator:canChooseStart()
+            return self.state == "idle"
         end
         function coordinator:isStopEnabled()
             return self.state == "playing" or self.state == "paused"
@@ -161,6 +171,21 @@ describe("playback dialog", function()
         function coordinator:stop()
             self.stop_count = self.stop_count + 1
             self.state = "stopping"
+            return true
+        end
+        function coordinator:startHere()
+            self.start_here_count = self.start_here_count + 1
+            self.state = "loading"
+            return true
+        end
+        function coordinator:resumeSaved()
+            self.resume_saved_count = self.resume_saved_count + 1
+            self.state = "loading"
+            return true
+        end
+        function coordinator:startOver()
+            self.start_over_count = self.start_over_count + 1
+            self.state = "loading"
             return true
         end
 
@@ -228,6 +253,7 @@ describe("playback dialog", function()
         assert.are.equal("Ready\n— / —", dialog.status_text.text)
         assert.are.equal(0, dialog.progress_bar.percentage)
         assert.are.equal("Hide", dialog.buttons[2][2].text)
+        assert.are.equal("Start here", dialog:getButtonById("start_here").text)
         assert.are.equal(0, scheduler.schedules)
 
         dialog.buttons[1][2].callback()
@@ -299,6 +325,36 @@ describe("playback dialog", function()
         assert.are.equal(dialog, ui_manager.closed[1])
         assert.are.equal(1, closed)
         assert.are.equal(1, dialog.base_close_count)
+    end)
+
+    it("shows explicit resume, current-position, and start-over choices without autoplay", function()
+        coordinator.has_resume = true
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+        }
+        assert.are.equal(0, coordinator.toggle_count)
+        assert.are.equal("Resume", dialog:getButtonById("resume").text)
+        assert.are.equal("Start here", dialog:getButtonById("start_here").text)
+        assert.are.equal("Start over", dialog:getButtonById("start_over").text)
+
+        dialog.buttons[3][1].callback()
+        assert.are.equal(1, coordinator.resume_saved_count)
+        assert.are.equal(0, coordinator.start_here_count)
+        assert.are.equal(0, coordinator.start_over_count)
+    end)
+
+    it("keeps start over available after narration reaches the end", function()
+        coordinator.state = "ended"
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+        }
+
+        assert.is_nil(dialog:getButtonById("resume"))
+        assert.are.equal("Start over", dialog:getButtonById("start_over").text)
+        dialog.buttons[3][2].callback()
+        assert.are.equal(1, coordinator.start_over_count)
     end)
 
     it("hides while paused without changing playback state", function()

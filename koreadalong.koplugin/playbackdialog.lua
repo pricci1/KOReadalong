@@ -89,6 +89,8 @@ function PlaybackDialog:init()
 
     local has_resume = type(self.coordinator.canResume) == "function"
         and self.coordinator:canResume()
+    local has_start_over = has_resume
+        or self.coordinator:getState() == "ended"
     local start_choices = {
         {
             id = "start_here",
@@ -117,6 +119,8 @@ function PlaybackDialog:init()
                 end)
             end,
         })
+    end
+    if has_start_over then
         start_choices[#start_choices + 1] = {
             id = "start_over",
             text = _("Start over"),
