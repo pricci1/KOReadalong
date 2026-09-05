@@ -400,6 +400,9 @@ function KoReadalong:_mark_rendering()
 end
 
 function KoReadalong:_follow_range(pos0, pos1)
+    if self.follow_state ~= FOLLOWING or not active_narration(self) then
+        return
+    end
     if pointer_visible(self, pos0) or pointer_visible(self, pos1) then
         return
     end
@@ -596,6 +599,11 @@ function KoReadalong:_register_highlight_action()
                     self:_show_error(_("no word is selected"))
                     return
                 end
+
+                -- A same-resource jump reports its new range synchronously;
+                -- enter Following before asking the coordinator to seek so
+                -- that explicit Read from here also navigates to the target.
+                self:_begin_following()
 
                 local called, started, error_message = pcall(
                     self.coordinator.playFromXPointer,

@@ -183,6 +183,9 @@ describe("KoReadalong lifecycle and menu", function()
             end
             function instance:playFromXPointer(pos0, pos1)
                 self.play_from_calls[#self.play_from_calls + 1] = { pos0, pos1 }
+                if self.emit_range_on_play_from then
+                    self.options.on_range("selected-start", "selected-end")
+                end
                 if self.fail_on_play_from then
                     self.state = "error"
                     self.options.on_error(self.fail_on_play_from)
@@ -568,6 +571,41 @@ describe("KoReadalong lifecycle and menu", function()
         assert.is_false(action.show_in_highlight_dialog_func())
     end)
 
+    it("does not follow new ranges while browsing", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        plugin:_set_browsing()
+        range_visible = false
+
+        plugin.coordinator.options.on_range("later-start", "later-end")
+
+        assert.are.equal("browsing", plugin.follow_state)
+        assert.are.equal(0, #goto_events)
+        assert.are.same({
+            pos0 = "later-start",
+            pos1 = "later-end",
+        }, plugin.latest_range)
+    end)
+
+    it("enters following before a same-resource Read from here range callback", function()
+        plugin:onReaderReady()
+        plugin:_set_browsing()
+        coordinator.state = "playing"
+        coordinator.emit_range_on_play_from = true
+        range_visible = false
+        highlight.selected_text = {
+            pos0 = "word-start",
+            pos1 = "word-end",
+        }
+
+        local action = highlight.buttons["12_read_from_here"](highlight)
+        action.callback()
+
+        assert.are.equal("following", plugin.follow_state)
+        assert.are.equal(1, #goto_events)
+        assert.are.equal("selected-start", goto_events[1].args[1])
+    end)
+
     it("closes the transient selection and reports jump errors", function()
         plugin:onReaderReady()
         highlight.selected_text = {
@@ -635,6 +673,7 @@ describe("KoReadalong lifecycle and menu", function()
 
     it("follows an active range only when it is outside the current page", function()
         plugin:onReaderReady()
+        coordinator.state = "playing"
         local on_range = plugin.coordinator.options.on_range
 
         on_range("visible-start", "visible-end")
