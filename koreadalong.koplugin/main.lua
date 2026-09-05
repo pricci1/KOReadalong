@@ -163,7 +163,6 @@ function KoReadalong:_reset_navigation()
     self.latest_range = nil
     self.input_pending = false
     self.last_xpointer = current_xpointer(self)
-    self.last_position_signature = nil
     self:_set_follow_state(FOLLOWING)
 end
 
@@ -305,13 +304,7 @@ function KoReadalong:_expected_navigation_matches(kind, value)
     return true
 end
 
-function KoReadalong:_schedule_browse_candidate(
-    kind,
-    value,
-    signature,
-    logical_changed,
-    pointer
-)
+function KoReadalong:_schedule_browse_candidate(logical_changed, pointer)
     if self.follow_state ~= FOLLOWING or not active_narration(self) then
         return
     end
@@ -323,9 +316,6 @@ function KoReadalong:_schedule_browse_candidate(
     self.navigation_serial = self.navigation_serial + 1
     local serial = self.navigation_serial
     self.navigation_candidate = {
-        kind = kind,
-        value = value,
-        signature = signature,
         pointer = pointer,
         logical_changed = logical_changed,
         input_navigation = input_navigation,
@@ -355,25 +345,13 @@ function KoReadalong:_schedule_browse_candidate(
     end
 end
 
-function KoReadalong:_observe_position(kind, value, second_value)
-    local signature = kind .. ":" .. tostring(value) .. ":" .. tostring(second_value)
+function KoReadalong:_observe_position(kind, value)
     local expected = self:_expected_navigation_matches(kind, value)
     local pointer = current_xpointer(self)
     local logical_changed = pointer ~= self.last_xpointer
-    local changed_signature = signature ~= self.last_position_signature
-    logical_changed = logical_changed or changed_signature
     self.last_xpointer = pointer
-    self.last_position_signature = signature
     if not expected then
-        self:_schedule_browse_candidate(
-            kind,
-            value,
-            signature,
-            logical_changed,
-            pointer
-        )
-    elseif changed_signature then
-        self.input_pending = false
+        self:_schedule_browse_candidate(logical_changed, pointer)
     end
 end
 
@@ -734,7 +712,7 @@ function KoReadalong:onPageUpdate(new_page)
 end
 
 function KoReadalong:onPosUpdate(new_pos, new_page)
-    self:_observe_position("position", new_pos, new_page)
+    self:_observe_position("position", new_pos)
     refresh_overlay(self)
 end
 

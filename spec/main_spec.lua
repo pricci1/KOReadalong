@@ -691,7 +691,6 @@ describe("KoReadalong lifecycle and menu", function()
         plugin:onReaderReady()
         coordinator.state = "playing"
         plugin.last_xpointer = current_xpointer
-        plugin.last_position_signature = "page:1:nil"
 
         ui_manager.event_hook:execute("InputEvent")
         current_xpointer = "manual-page"
@@ -705,7 +704,6 @@ describe("KoReadalong lifecycle and menu", function()
         plugin:onReaderReady()
         coordinator.state = "paused"
         plugin.last_xpointer = current_xpointer
-        plugin.last_position_signature = "page:1:nil"
 
         ui_manager.event_hook:execute("InputEvent")
         current_xpointer = "paused-page"
@@ -722,7 +720,6 @@ describe("KoReadalong lifecycle and menu", function()
         coordinator.state = "playing"
         current_xpointer = "narrated"
         plugin.last_xpointer = current_xpointer
-        plugin.last_position_signature = "page:1:nil"
 
         ui_manager.event_hook:execute("InputEvent")
         plugin:onPageUpdate(1)
@@ -744,12 +741,23 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal("following", plugin.follow_state)
     end)
 
+    it("does not classify duplicate page and position notifications as browsing", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        current_xpointer = "narrated"
+        plugin.last_xpointer = current_xpointer
+
+        plugin:onPageUpdate(1)
+        plugin:onPosUpdate(10, 1)
+        assert.is_nil(plugin.navigation_candidate)
+        assert.are.equal("following", plugin.follow_state)
+    end)
+
     it("does not classify rerender, rotation, zoom, or font changes as browsing", function()
         plugin:onReaderReady()
         coordinator.state = "playing"
         current_xpointer = "narrated"
         plugin.last_xpointer = current_xpointer
-        plugin.last_position_signature = "page:1:nil"
 
         plugin:onSetDimensions()
         plugin:onPageUpdate(2)
@@ -769,7 +777,6 @@ describe("KoReadalong lifecycle and menu", function()
         current_xpointer = "narrated"
         plugin.coordinator.options.on_range("narrated", "narrated-end")
         plugin.last_xpointer = current_xpointer
-        plugin.last_position_signature = "page:1:nil"
 
         ui_manager.event_hook:execute("InputEvent")
         current_xpointer = "manual-page"
