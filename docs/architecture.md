@@ -123,6 +123,38 @@ resolved clip ranges, so page numbers, screen boxes, and transient rendering
 state do not affect start selection. Opening the document only constructs the
 coordinator; it never starts audio.
 
+Reader following is a transient session state owned by `main.lua`. New starts,
+explicit **Read from here**, **Stop**, EOF, errors, and document close reset it
+to **Following**; **Browsing** is never persisted. While Following, an active
+range outside the visible page uses the existing `GotoXPointer` path. A
+deliberate reader move while playing or paused changes only this state: audio,
+adapter polling, confirmed narration persistence, and timeline/resource
+handoff continue normally.
+
+KOReader's pinned runtime emits one `InputEvent` per input frame without source
+metadata, followed by `PageUpdate`/`PosUpdate` notifications for page turns and
+programmatic jumps. `main.lua` therefore correlates those events with the
+current XPointer and uses a bounded expected-navigation guard containing the
+plugin target's XPointer, page, position, input sequence, and event budget.
+Duplicate page/position notifications are consumed by that target-aware guard;
+newer input invalidates it. Rerender, rotation, dimensions, zoom, font, and
+partial-rerender hooks suppress their resulting position events instead of
+classifying them as browsing. This avoids both the old one-event race and
+false suspension from asynchronous reader redraws.
+
+The latest valid active range remains in XPointers while Browsing even when its
+ephemeral screen underline is off-page. **Return to narration** jumps to that
+range once, refreshes the underline, and returns to Following; it is disabled
+or reports one calm localized message when no valid current range exists. The
+playback dialog renders the state and action with normal KOReader button sizing,
+and Dispatcher/Gesture Manager exposes the return action statically while its
+runtime handler performs the current-range check.
+
+The coordinator remains platform-neutral. Its only reader-facing additions are
+the narrow current-range accessor and range-cleared signal used to retain or
+discard the active XPointer; `mpvaudio.lua`, `kindleaudio.lua`, and
+`kinampport.lua` do not own reader navigation.
+
 Dynamic read-along marks should be a registered reader view module with a `paintTo` method. Persisted highlights are intentionally avoided because narration state must not enter KOReader's annotations/bookmarks/export systems. Text anchors are stored as XPointers; rendered boxes are display-dependent cache entries only. Confirmed narration state is stored separately in the book's `DocSettings` sidecar and is cleared when the user chooses **Stop**, **Start over**, or reaches EOF.
 
 ## Audio adapters

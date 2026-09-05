@@ -133,6 +133,15 @@ target clip, or saved XPointer no longer matches, KoReadalong discards the
 stale state and **Resume** falls back to the current-position start path.
 After narration reaches the end, **Start over** remains available for replay.
 
+While narration is playing or paused, a deliberate page turn or reader jump
+through the table of contents, search results, or a link suspends automatic
+following without stopping audio, timing, or chapter handoff. The panel labels
+this state **Playing · browsing** or **Paused · browsing** and retains the
+latest valid narrated XPointer range. Choose **Return to narration** in the
+panel, or assign **Reader → KoReadalong: return to narration** in Gesture
+manager/Dispatcher, to jump back once and resume Following. Browsing is a
+transient session state and is not restored when the book is reopened.
+
 ### Assign a gesture
 
 The panel can be opened with any gesture supported by KOReader:
@@ -144,6 +153,10 @@ The panel can be opened with any gesture supported by KOReader:
 The assignment is saved by KOReader. The action remains available in Gesture
 manager for all reader documents, but only opens the panel when the current
 book contains usable Media Overlays.
+
+The **KoReadalong: return to narration** action is likewise available for
+reader gesture/Dispatcher assignment. It is disabled when no active narrated
+range is available and does not create a persistent annotation.
 
 While reading a supported book, hold a word and choose **Read from here** in
 KOReader's highlight dialog to start narration at that word's overlay segment.
@@ -187,6 +200,7 @@ lightweight test is included in `make check`.
 `make smoke-integration` generates a synthetic EPUB and exercises the complete
 pinned-KOReader pipeline: package and SMIL parsing, private audio extraction,
 real mpv IPC, timeline lookup, CRe fragment resolution, the playback panel,
-ephemeral underline, EOF handling, and cleanup.
+ephemeral underline, browse-away without snap-back, Return to narration,
+following across a resource transition, EOF handling, and cleanup.
 
 See [docs/architecture.md](docs/architecture.md) for the MVP boundaries and compatibility findings.
