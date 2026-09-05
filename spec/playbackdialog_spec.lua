@@ -422,6 +422,15 @@ describe("playback dialog", function()
         assert.are.equal("Playing · browsing\n0:30 / 2:00", dialog.status_text.text)
         assert.are.equal("ui", ui_manager.dirty[#ui_manager.dirty].refresh_type)
         assert.are.equal(dialog.movable.dimen, ui_manager.dirty[#ui_manager.dirty].dimen)
+
+        coordinator.state = "paused"
+        follow_state = "following"
+        dialog:onFollowStateChanged()
+        assert.are.equal("Paused · following\n0:30 / 2:00", dialog.status_text.text)
+
+        follow_state = "browsing"
+        dialog:onFollowStateChanged()
+        assert.are.equal("Paused · browsing\n0:30 / 2:00", dialog.status_text.text)
     end)
 
     it("exposes a full-width return action and refreshes its enabled state", function()

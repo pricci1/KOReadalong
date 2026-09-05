@@ -28,29 +28,26 @@ local function format_time(seconds)
 end
 
 local function state_label(state, follow_state)
-    local label
     if state == "playing" then
-        label = _("Playing")
+        if follow_state == "browsing" then
+            return _("Playing · browsing")
+        end
+        return _("Playing · following")
     elseif state == "paused" then
-        label = _("Paused")
+        if follow_state == "browsing" then
+            return _("Paused · browsing")
+        end
+        return _("Paused · following")
     elseif state == "loading" then
-        label = _("Loading…")
+        return _("Loading…")
     elseif state == "stopping" then
-        label = _("Stopping…")
+        return _("Stopping…")
     elseif state == "ended" then
-        label = _("Finished")
+        return _("Finished")
     elseif state == "error" then
-        label = _("Unavailable")
-    else
-        label = _("Ready")
+        return _("Unavailable")
     end
-    if state == "playing" or state == "paused" then
-        local location = follow_state == "browsing"
-            and _("browsing")
-            or _("following")
-        return label .. " · " .. location
-    end
-    return label
+    return _("Ready")
 end
 
 local function action_label(state)
