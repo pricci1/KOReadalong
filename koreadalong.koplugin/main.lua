@@ -612,8 +612,6 @@ function KoReadalong:_register_highlight_action()
                     if state ~= "error" then
                         self:_show_error(error_message)
                     end
-                else
-                    self:_begin_following()
                 end
             end,
         }

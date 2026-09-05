@@ -659,6 +659,10 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal("following", plugin.follow_state)
         assert.are.equal(1, #goto_events)
         assert.are.equal("selected-start", goto_events[1].args[1])
+        assert.are.same({
+            pos0 = "selected-start",
+            pos1 = "selected-end",
+        }, plugin.latest_range)
     end)
 
     it("does not carry the start control input into Following navigation", function()
