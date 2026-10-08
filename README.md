@@ -100,9 +100,14 @@ approximately one second of delay, but reported repeated native KOReader
 crashes with audio continuing. Crashes were reproduced while opening a book
 and restarting narration, including with Audiobook disabled; disabling that
 plugin alone is not an established fix. Native stability remains a first-release
-blocker under investigation. Orphan recovery has automated regression coverage;
-physical acceptance must also verify the complete recovery flow. The installed
-full player identifies 3.0.0; the minimal daemon's exact version remains unverified.
+blocker under investigation. Orphan recovery passed automated regressions and
+a real-KinAMP backend test on the Kindle: a client exited without close, a new
+client recovered its exact paused track in the same daemon, cleaned old files,
+refused a live-owner attempt without writes, and verified pause/resume/seek/stop.
+That test used silent audio and test-only unknown Bluetooth reporting; it is
+not native-reader or audible validation. Connected native playback and crash
+recovery remain acceptance gates. The installed full player identifies 3.0.0;
+the minimal daemon's exact version remains unverified.
 
 ### Troubleshooting
 
