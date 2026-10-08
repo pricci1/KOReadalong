@@ -25,6 +25,53 @@ local function service(files)
 end
 
 describe("KinAMP idle startup service", function()
+    local saved_bluetooth, saved_devices, saved_loader
+    before_each(function()
+        saved_bluetooth = package.loaded.kinamp_bt
+        saved_devices = package.loaded.kinamp_btdevices
+        saved_loader = package.preload.kinamp_bt
+    end)
+    after_each(function()
+        package.loaded.kinamp_bt = saved_bluetooth
+        package.loaded.kinamp_btdevices = saved_devices
+        package.preload.kinamp_bt = saved_loader
+    end)
+
+    it("recovers the official cached closed handle before checking output or opening settings", function()
+        local devices, reloads = {}, 0
+        package.loaded.kinamp_btdevices = devices
+        package.loaded.kinamp_bt = { available = function() return false end }
+        package.preload.kinamp_bt = function()
+            reloads = reloads + 1
+            return {
+                available = function() return true end,
+                getConnected = function() return {} end,
+                getConnectedName = function() return nil end,
+            }
+        end
+        local instance = KinAMPService.new()
+        local ready, message = instance:checkOutput()
+        assert.is_nil(ready)
+        assert.are.equal("Bluetooth audio is not connected", message)
+        assert.are.equal(1, reloads)
+        assert.is_nil(package.loaded.kinamp_btdevices)
+        package.loaded.kinamp_btdevices = devices
+        assert.is_not_nil(instance.get_bluetooth())
+        assert.are.equal(devices, package.loaded.kinamp_btdevices)
+        assert.are.equal(1, reloads)
+    end)
+
+    it("attempts at most one refresh when the official API stays unavailable", function()
+        local reloads = 0
+        package.loaded.kinamp_bt = { available = function() return false end }
+        package.preload.kinamp_bt = function()
+            reloads = reloads + 1
+            return { available = function() return false end }
+        end
+        assert.is_true(KinAMPService.new():checkOutput())
+        assert.are.equal(1, reloads)
+    end)
+
     it("requires Bluetooth only when the official API confirms no connected device", function()
         local connected, name = {}, nil
         local instance = KinAMPService.new{

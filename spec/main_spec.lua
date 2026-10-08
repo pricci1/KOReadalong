@@ -396,6 +396,7 @@ describe("KoReadalong lifecycle and menu", function()
             "ui/widget/infomessage",
             "ui/widget/confirmbox",
             "kinamp_btdevices",
+            "kinampservice",
             "gettext",
             "ui/widget/container/widgetcontainer",
             "dispatcher",
@@ -559,8 +560,15 @@ describe("KoReadalong lifecycle and menu", function()
         assert.matches("No Bluetooth audio device is connected", prompt.text)
         assert.matches("press Start again", prompt.text)
         assert.are.equal("Bluetooth setup", prompt.ok_text)
+        local refreshed = false
+        package.loaded.kinampservice = { shared = { get_bluetooth = function()
+            refreshed = true
+        end } }
         local opened = 0
-        package.loaded.kinamp_btdevices = { open = function() opened = opened + 1 end }
+        package.loaded.kinamp_btdevices = { open = function()
+            assert.is_true(refreshed)
+            opened = opened + 1
+        end }
         prompt.ok_callback()
         assert.are.equal(1, opened)
     end)

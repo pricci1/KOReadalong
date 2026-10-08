@@ -66,7 +66,20 @@ function KinAMPService.new(options)
             return ok and config or nil
         end,
         get_bluetooth = options.get_bluetooth or function()
+            local cached = package.loaded.kinamp_bt
             local ok, bluetooth = pcall(require, "kinamp_bt")
+            if ok and cached and type(bluetooth.available) == "function" then
+                local reported, available = pcall(bluetooth.available)
+                if reported and available == false then
+                    -- The official close() can leave handle_tried set, so its
+                    -- cached module cannot reopen after reader transitions.
+                    -- Refresh that reader API and the settings that capture it;
+                    -- no daemon, radio or existing client is changed.
+                    package.loaded.kinamp_bt = nil
+                    package.loaded.kinamp_btdevices = nil
+                    ok, bluetooth = pcall(require, "kinamp_bt")
+                end
+            end
             return ok and bluetooth or nil
         end,
         exists = options.exists or exists,

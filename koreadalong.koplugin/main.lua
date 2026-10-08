@@ -520,6 +520,7 @@ function KoReadalong:_show_kinamp_help(message)
         text = message or KINAMP_HELP,
         ok_text = _("Bluetooth setup"),
         ok_callback = function()
+            require("kinampservice").shared.get_bluetooth()
             local ok, settings = pcall(require, "kinamp_btdevices")
             if ok and type(settings.open) == "function" then
                 settings.open()

@@ -347,6 +347,10 @@ startup/acquisition. A confirmed empty connected-device list without a connected
 name produces a recoverable Bluetooth setup prompt. Unavailable or inconclusive
 reporting is not treated as disconnection. Busy-client refusal takes priority;
 the platform-neutral coordinator knows nothing about Bluetooth.
+The installed official module can cache a closed LIPC handle after reader
+transitions. Before checking output or opening setup, an unavailable cached API
+is refreshed once along with its settings module; available shared handles are
+left intact. This changes no installed KinAMP files, daemon or radio state.
 
 Stop and document close still release only owned audio and temporary resources.
 Neither the starter nor the port quits/kills a daemon or pairs Bluetooth devices.
