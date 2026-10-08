@@ -211,6 +211,10 @@ local function normalize_status(status)
         position = position,
         duration = duration,
         path = status.path,
+        pid = status.pid,
+        index = status.index,
+        count = status.count,
+        mode = status.mode,
     }
 end
 
@@ -522,6 +526,14 @@ function KindleAudio:_remove_playlist()
     if not self.playlist_owned then
         return true
     end
+    if self.starter and type(self.starter.forget) == "function" then
+        local forgotten, forget_error = invoke(
+            self.starter, "forget", self.port:getRuntimeDir(), self.playlist_path
+        )
+        if not forgotten then
+            return nil, forget_error or "Unable to clear read-along ownership"
+        end
+    end
     local removed, error_message = invoke(
         self.playlist_writer,
         "remove",
@@ -540,6 +552,7 @@ end
 function KindleAudio:_clear_resource()
     self.audio_path = nil
     self.service_starting = false
+    self.orphan_stop_sent = false
     self.playlist_path = nil
     self.playlist_owned = false
     self.command_attempted = false
@@ -737,6 +750,17 @@ function KindleAudio:_process_preload(snapshot)
     end
     local status = snapshot.status
     if status.state == "playing" or status.state == "paused" then
+        if self.starter and type(self.starter.isOrphan) == "function"
+            and self.starter:isOrphan(self.port:getRuntimeDir(), status) then
+            if same_token(snapshot.token, self.baseline_token) then return true end
+            if not self.orphan_stop_sent then
+                local sent, error_message = self:_send{{ "stop" }}
+                if not sent then return self:_error(error_message) end
+                self.orphan_stop_sent = true
+                self.baseline_token = snapshot.token
+            end
+            return true
+        end
         return self:_error("KinAMP is busy")
     end
     if same_token(snapshot.token, self.baseline_token) then
@@ -746,9 +770,25 @@ function KindleAudio:_process_preload(snapshot)
         return self:_error("KinAMP status is not idle")
     end
 
+    if self.starter and type(self.starter.releaseOrphan) == "function" then
+        local released, release_error = invoke(
+            self.starter, "releaseOrphan", self.port:getRuntimeDir(), status
+        )
+        if not released then return self:_error(release_error) end
+    end
     local created, error_message = self:_create_playlist()
     if not created then
         return self:_error(error_message)
+    end
+    if self.starter and type(self.starter.remember) == "function" then
+        local remembered, remember_error = invoke(
+            self.starter, "remember", self.port:getRuntimeDir(), status,
+            self.audio_path, self.playlist_path
+        )
+        if not remembered then
+            self:_remove_playlist()
+            return self:_error(remember_error)
+        end
     end
     self:_log_publication(snapshot.token)
     local commands = {
@@ -925,6 +965,7 @@ function KindleAudio:open(path, options)
     self.status.error = nil
     self.open_sent = false
     self.command_attempted = false
+    self.orphan_stop_sent = false
     self.pause_pending = nil
     self.baseline_token = nil
     self.last_token = nil
@@ -943,7 +984,9 @@ function KindleAudio:open(path, options)
     end
     if probe.status
         and (probe.status.state == "playing"
-            or probe.status.state == "paused") then
+            or probe.status.state == "paused")
+        and not (self.starter and type(self.starter.isOrphan) == "function"
+            and self.starter:isOrphan(self.port:getRuntimeDir(), probe.status)) then
         return self:_error("KinAMP is busy")
     end
     if self.starter and type(self.starter.checkOutput) == "function" then

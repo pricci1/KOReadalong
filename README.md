@@ -55,6 +55,14 @@ read-along session; they never kill or quit a shared daemon. KinAMP's official
 plugin may close an idle daemon on reader/file-manager transitions or exit;
 the next Start arranges readiness again. Opening a book never starts audio.
 
+If KOReader crashes during narration, reopening and pressing **Start** can
+recover its orphaned track without quitting KinAMP. KoReadalong records the
+reader and daemon process start identities and private audio/playlist paths.
+Recovery requires a dead recorded reader, the same daemon generation, and
+fresh status matching that exact single-entry music track. It stops that track,
+waits for stopped acknowledgement, cleans its recorded temporary files, then
+loads the new session. Unknown ownership is still refused as busy.
+
 KinAMP still owns its installation, Bluetooth, saved playlists, and player
 settings. KoReadalong does not pair devices or change the radio automatically.
 Its **KinAMP setup and help** menu provides the integrated Bluetooth route and the
@@ -87,10 +95,14 @@ refusal, and native close/reopen with automatic restart. The synthetic
 chapter-transition fixture crossed spine index 3 → a non-overlay item at 4 →
 the next narrated item at 5, reached EOF, and released its temporary audio.
 The integrated Bluetooth prompt/settings and closed-handle recovery were also
-verified. These new checks used status/clock and rendered-UI evidence, not
-audible confirmation: a connected-headphone listening check remains the final
-first-version acceptance gate. The installed full player identifies 3.0.0;
-the minimal daemon's exact version remains unverified.
+verified. The user subsequently confirmed audible headphone playback with
+approximately one second of delay, but reported repeated native KOReader
+crashes with audio continuing. Crashes were reproduced while opening a book
+and restarting narration, including with Audiobook disabled; disabling that
+plugin alone is not an established fix. Native stability remains a first-release
+blocker under investigation. Orphan recovery has automated regression coverage;
+physical acceptance must also verify the complete recovery flow. The installed
+full player identifies 3.0.0; the minimal daemon's exact version remains unverified.
 
 ### Troubleshooting
 
@@ -112,8 +124,8 @@ sanitizes media paths and is suitable for attaching to a bug report. Use
 KOReader's optional HTTP inspector is unauthenticated and can invoke arbitrary
 methods. Use it only on a trusted LAN for testing, never expose it publicly,
 and stop it and disable autostart afterward. Prefer native book opening during
-device tests: this session saw a reader crash on inspector-triggered fixture
-reopening, while native close/reopen succeeded; its cause is not established.
+device tests. This session also reproduced crashes through native controls;
+the inspector is not the only affected route and the cause is not established.
 
 | Symptom | Check | Remedy |
 | --- | --- | --- |
@@ -126,6 +138,7 @@ reopening, while native close/reopen succeeded; its cause is not established.
 | Resume jumps backward after a pause | KinAMP 3.0.0's `play` command can rewind its synthetic clock. | Use KoReadalong's **Pause/Resume**. The adapter works around this by resuming with a whole-second `seek` to the last published paused position. |
 | Playback appears to finish after an external stop, or the final position is stale | KinAMP's protocol cannot distinguish an external stop from natural EOF. | Treat the result as ambiguous; avoid stopping the daemon from another client when reliable EOF detection matters. |
 | Audio continues after the controls disappear | **Hide** only hides the controls; it does not stop playback. | Reopen **Read along** to show the controls. Use **Stop** to stop narration and reset playback to the first clip. |
+| Audio continues after a reader crash | KinAMP is independent and does not monitor reader death. | Reopen KOReader and the EPUB, then press **Start**. A positively identified orphan is recovered automatically; unknown or other-client playback is left untouched. |
 
 ### Workarounds and limitations
 
@@ -143,6 +156,10 @@ reopening, while native close/reopen succeeded; its cause is not established.
   and verifies fresh idle status before playback. Existing processes without
   working IPC are left alone. Stop/close never quit or kill a daemon; the
   official plugin owns idle shutdown. Bluetooth connection remains a user action.
+- **Crashes:** KinAMP can continue audio until the next explicit Start reclaims
+  a recorded orphan. Recovery is not an atomic cross-client lease: do not run
+  competing clients concurrently. Sessions from older versions without an
+  ownership receipt cannot be automatically reclaimed.
 - **Controls:** **Hide** leaves playback running; use **Stop** to stop narration
   and reset playback to the first clip.
 

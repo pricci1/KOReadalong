@@ -2,12 +2,54 @@ local loaded_lfs, lfs = pcall(require, "libs/libkoreader-lfs")
 if not loaded_lfs then
     lfs = require("lfs")
 end
+local ffi = require("ffi")
+require("ffi/posix_h")
 
 -- Startup interoperability with externally installed KinAMP, not a player or
 -- lifecycle manager. The official launcher replaces existing processes and
 -- its private Lua launch helper changes Bluetooth. Neither is safe here.
 local KinAMPService = {}
 KinAMPService.__index = KinAMPService
+
+local function read_file(path)
+    local file = io.open(path, "r")
+    if not file then return nil end
+    local content = file:read(4097)
+    file:close()
+    return content
+end
+
+local function process_identity(pid)
+    local content = read_file("/proc/" .. pid .. "/stat")
+    if not content then
+        -- Unknown is not dead: fail closed if /proc cannot be inspected.
+        local attributes, _, errno = lfs.attributes("/proc/" .. pid)
+        if not attributes and errno == 2 then return false end
+        return nil
+    end
+    local fields = content:match("^%d+ %(.+%) (.*)")
+    local index = 0
+    for value in (fields or ""):gmatch("%S+") do
+        index = index + 1
+        if index == 20 and value:match("^%d+$") then
+            -- Linux field 22, the process start clock, excludes PID reuse.
+            return pid .. ":" .. value
+        end
+    end
+end
+
+local function write_file(path, content)
+    local file = io.open(path .. ".new", "w")
+    if not file then return nil end
+    local written = file:write(content)
+    local closed = file:close()
+    if written and closed and os.rename(path .. ".new", path) then return true end
+    os.remove(path .. ".new")
+end
+
+local function receipt_path(runtime)
+    return runtime:gsub("/+$", "") .. "/koreadalong-kinamp-owner"
+end
 
 local function exists(path)
     return lfs.attributes(path, "mode") == "file"
@@ -85,7 +127,80 @@ function KinAMPService.new(options)
         exists = options.exists or exists,
         running = options.running or running,
         launch = options.launch or launch,
+        reader_pid = options.reader_pid or tonumber(ffi.C.getpid()),
+        process_identity = options.process_identity or process_identity,
+        read_file = options.read_file or read_file,
+        write_file = options.write_file or write_file,
+        remove_file = options.remove_file or os.remove,
     }, KinAMPService)
+end
+
+function KinAMPService:_receipt(runtime)
+    local content = self.read_file(receipt_path(runtime))
+    if not content or #content > 4096 then return nil end
+    local reader, daemon, audio, playlist = content:match(
+        "^(%d+:%d+)\n(%d+:%d+)\n([^\n]+)\n([^\n]+)\n$"
+    )
+    if reader then
+        return { reader = reader, daemon = daemon, audio = audio, playlist = playlist }
+    end
+end
+
+function KinAMPService:isOrphan(runtime, status)
+    local receipt = self:_receipt(runtime)
+    if not receipt or not status or not status.pid
+        or status.path ~= receipt.audio or status.index ~= 0
+        or status.count ~= 1 or status.mode ~= "music" then return false end
+    local reader_pid = tonumber(receipt.reader:match("^%d+"))
+    local reader = self.process_identity(reader_pid)
+    return reader ~= nil and reader ~= receipt.reader
+        and self.process_identity(status.pid) == receipt.daemon
+end
+
+function KinAMPService:releaseOrphan(runtime, status)
+    if status.state ~= "stopped" or not self:isOrphan(runtime, status) then return true end
+    local receipt = self:_receipt(runtime)
+    local directory = receipt.audio:match("^(/tmp/koreadalong%-[%w]+)/audio%-[%w]+%.[%w]+$")
+    local prefix = runtime:gsub("/+$", "") .. "/koreadalong-kinamp-"
+    if not directory or receipt.playlist:sub(1, #prefix) ~= prefix
+        or not receipt.playlist:sub(#prefix + 1):match("^[%w]+%.m3u$") then
+        return nil, "Unable to verify orphaned read-along files"
+    end
+    for _, path in ipairs{ receipt.audio, receipt.playlist } do
+        if self.exists(path) and not self.remove_file(path) then
+            return nil, "Unable to remove orphaned read-along files"
+        end
+    end
+    -- Never recurse: unrelated files, even inside this directory, stay intact.
+    lfs.rmdir(directory)
+    if not self.remove_file(receipt_path(runtime)) then
+        return nil, "Unable to clear orphaned read-along ownership"
+    end
+    return true
+end
+
+function KinAMPService:remember(runtime, status, audio, playlist)
+    local reader = self.process_identity(self.reader_pid)
+    local daemon = status and status.pid and self.process_identity(status.pid)
+    if not reader or not daemon or audio:find("[%z\r\n]")
+        or playlist:find("[%z\r\n]") then
+        return nil, "Unable to record read-along ownership"
+    end
+    if not self.write_file(receipt_path(runtime), table.concat({
+        reader, daemon, audio, playlist, "",
+    }, "\n")) then
+        return nil, "Unable to record read-along ownership"
+    end
+    return true
+end
+
+function KinAMPService:forget(runtime, playlist)
+    local receipt = self:_receipt(runtime)
+    if receipt and receipt.playlist == playlist
+        and receipt.reader == self.process_identity(self.reader_pid) then
+        return self.remove_file(receipt_path(runtime))
+    end
+    return true
 end
 
 function KinAMPService:checkOutput()

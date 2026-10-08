@@ -207,3 +207,120 @@ mv "$KINAMP_RUNTIME_DIR/result.tmp" "$KINAMP_RUNTIME_DIR/result"
         assert.is_nil(instance.started_pid)
     end)
 end)
+
+describe("KinAMP read-along ownership receipts", function()
+    it("recovers only a dead reader's exact resource in the same daemon generation", function()
+        local identities = { [11] = "11:101", [22] = "22:202" }
+        local files = {}
+        local instance = KinAMPService.new{
+            reader_pid = 11,
+            process_identity = function(pid) return identities[pid] end,
+            read_file = function(path) return files[path] end,
+            write_file = function(path, bytes) files[path] = bytes; return true end,
+        }
+        local status = { pid = 22, path = "/private/audio.m4a", index = 0, count = 1, mode = "music" }
+        assert.is_true(instance:remember("/tmp", status, status.path, "/tmp/private.m3u"))
+        assert.is_false(instance:isOrphan("/tmp", status))
+        identities[11] = false
+        assert.is_true(instance:isOrphan("/tmp", status))
+        identities[11] = "11:303" -- Reader PID reused: the recorded reader is dead.
+        assert.is_true(instance:isOrphan("/tmp", status))
+        identities[11] = nil -- Inaccessible metadata is not evidence of death.
+        assert.is_false(instance:isOrphan("/tmp", status))
+        identities[11] = false
+        for key, value in pairs{ pid = 23, path = "/another/audio.m4a", index = 1,
+            count = 2, mode = "radio" } do
+            local previous = status[key]
+            status[key] = value
+            assert.is_false(instance:isOrphan("/tmp", status))
+            status[key] = previous
+        end
+        identities[22] = "22:404" -- Daemon PID reused: never stop the replacement.
+        assert.is_false(instance:isOrphan("/tmp", status))
+        files["/tmp/koreadalong-kinamp-owner"] = "corrupt\n"
+        assert.is_false(instance:isOrphan("/tmp", status))
+    end)
+
+    it("forgets only this live reader's exact playlist receipt", function()
+        local bytes, removed
+        local identity = "11:101"
+        local instance = KinAMPService.new{
+            reader_pid = 11,
+            process_identity = function(pid) return pid == 11 and identity or "22:202" end,
+            read_file = function() return bytes end,
+            write_file = function(_, value) bytes = value; return true end,
+            remove_file = function(path) removed = path; bytes = nil; return true end,
+        }
+        assert.is_true(instance:remember("/runtime", { pid = 22 }, "/audio", "/playlist"))
+        assert.is_true(instance:forget("/runtime", "/another"))
+        assert.is_nil(removed)
+        identity = "11:303"
+        assert.is_true(instance:forget("/runtime", "/playlist"))
+        assert.is_nil(removed)
+        identity = "11:101"
+        assert.is_true(instance:forget("/runtime", "/playlist"))
+        assert.are.equal("/runtime/koreadalong-kinamp-owner", removed)
+    end)
+
+    it("removes only confirmed stopped orphan files, without recursive directory cleanup", function()
+        local root = os.tmpname()
+        os.remove(root)
+        root = "/tmp/koreadalong-" .. root:match("([^/]+)$"):gsub("%W", "")
+        assert(lfs.mkdir(root))
+        local audio = root .. "/audio-old.wav"
+        local playlist = root .. "/koreadalong-kinamp-old.m3u"
+        for _, path in ipairs{ audio, playlist, root .. "/unrelated" } do
+            assert(io.open(path, "w")):close()
+        end
+        local identities = { [11] = "11:101", [22] = "22:202" }
+        local instance = KinAMPService.new{
+            reader_pid = 11,
+            process_identity = function(pid) return identities[pid] end,
+        }
+        local success, message = pcall(function()
+            local status = { pid = 22, path = audio, index = 0, count = 1,
+                mode = "music", state = "playing" }
+            assert.is_true(instance:remember(root, status, audio, playlist))
+            identities[11] = false
+            assert.is_true(instance:releaseOrphan(root, status))
+            assert.is_not_nil(lfs.attributes(audio))
+            status.state = "stopped"
+            assert.is_true(instance:releaseOrphan(root, status))
+            assert.is_nil(lfs.attributes(audio))
+            assert.is_nil(lfs.attributes(playlist))
+            assert.is_nil(lfs.attributes(root .. "/koreadalong-kinamp-owner"))
+            assert.is_not_nil(lfs.attributes(root .. "/unrelated"))
+        end)
+        for _, path in ipairs{ audio, playlist, root .. "/unrelated",
+            root .. "/koreadalong-kinamp-owner", root .. "/koreadalong-kinamp-owner.new" } do
+            os.remove(path)
+        end
+        lfs.rmdir(root)
+        assert(success, message)
+    end)
+
+    it("atomically persists real Linux process start identities and removes the receipt", function()
+        local root = os.tmpname()
+        os.remove(root)
+        assert(lfs.mkdir(root))
+        local instance = KinAMPService.new()
+        local pid = tonumber(ffi.C.getpid())
+        local pipe = assert(io.popen("awk '{print $22}' /proc/" .. pid .. "/stat"))
+        local start = pipe:read("*l")
+        pipe:close()
+        local success, message = pcall(function()
+            assert.are.equal(pid .. ":" .. start, instance.process_identity(pid))
+            assert.is_false(instance.process_identity(2147483647))
+            assert.is_true(instance:remember(root, { pid = pid }, "/audio", "/playlist"))
+            local file = assert(io.open(root .. "/koreadalong-kinamp-owner"))
+            assert.are.equal(pid .. ":" .. start .. "\n" .. pid .. ":" .. start
+                .. "\n/audio\n/playlist\n", file:read("*a"))
+            file:close()
+            assert.is_true(instance:forget(root, "/playlist"))
+        end)
+        os.remove(root .. "/koreadalong-kinamp-owner")
+        os.remove(root .. "/koreadalong-kinamp-owner.new")
+        lfs.rmdir(root)
+        assert(success, message)
+    end)
+end)

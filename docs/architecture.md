@@ -342,6 +342,18 @@ Missing installation, startup failure, and busy playback are recoverable before
 resource acquisition. There is no atomic cross-client claim in KinAMP's protocol;
 concurrent external launchers are not supported.
 
+The native boundary also writes a bounded, atomically replaced ownership receipt
+under the runtime directory before sending a load command. It contains Linux
+reader/daemon PID and process-start identities, the private audio path and M3U.
+A new reader may reclaim only a dead reader's exact single-entry music resource
+in the same daemon generation. The adapter requires a fresh matching publication,
+sends stop once, and waits for fresh stopped acknowledgement before removing the
+recorded private files and loading its new session. Cleanup never recursively
+deletes a directory. Normal release removes only this reader's exact receipt.
+This is recovery on explicit Start, not a daemon monitor or an atomic lease;
+another client can still race a check because KinAMP has no owner-scoped command.
+Unknown ownership, unavailable process metadata and replaced playback fail closed.
+
 The same native boundary reads the official `kinamp_bt` connection API before
 startup/acquisition. A confirmed empty connected-device list without a connected
 name produces a recoverable Bluetooth setup prompt. Unavailable or inconclusive

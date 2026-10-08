@@ -1359,4 +1359,73 @@ describe("KinAMP Kindle audio adapter", function()
         assert.is_nil(opened)
         assert.matches("newline", error_message)
     end)
+
+    it("reclaims an orphan only after fresh ownership checks and stopped acknowledgement", function()
+        local old_path = "/tmp/private-old-audio.m4a"
+        local old = daemon_status("playing", 32, 80, old_path)
+        local remembers, forgotten = {}, nil
+        local starter = {
+            isOrphan = function(_, runtime, status)
+                assert.are.equal("/tmp", runtime)
+                return status.path == old_path
+            end,
+            remember = function(_, _, status, audio, playlist)
+                remembers[#remembers + 1] = { status.state, audio, playlist }
+                return true
+            end,
+            forget = function(_, _, playlist) forgotten = playlist; return true end,
+        }
+        local port = make_port{ status = old, token = "old0" }
+        local audio, timer, _, writer = make_audio{ port = port, starter = starter }
+        assert.is_true(audio:open(AUDIO_PATH))
+        assert.are.equal(0, command_count(port, "stop")) -- Cached status is insufficient.
+        port:queue{ live = true, status = old, token = "old1" }
+        tick(timer)
+        assert.are.equal(1, command_count(port, "stop"))
+        port:queue{ live = true, status = old, token = "old2" }
+        tick(timer)
+        assert.are.equal(1, command_count(port, "stop")) -- No repeated recovery writes.
+        assert.are.equal(0, command_count(port, "load"))
+        port:queue{ live = true, status = daemon_status("stopped", 32, 80, old_path), token = "old3" }
+        tick(timer)
+        assert.are.same({ { "stopped", AUDIO_PATH, writer.created[1].path } }, remembers)
+        assert.are.equal(1, command_count(port, "load"))
+        port:queue{ live = true, status = daemon_status("playing", 3, 80, AUDIO_PATH), token = "new1" }
+        tick(timer)
+        assert.are.equal("playing", audio:getStatus().state)
+        assert.is_true(audio:stop())
+        tick(timer)
+        port:queue{ live = true, status = daemon_status("stopped", 3, 80, AUDIO_PATH), token = "new2" }
+        tick(timer)
+        assert.are.equal(writer.created[1].path, forgotten)
+        assert.are.equal("idle", audio:getStatus().state)
+    end)
+
+    it("leaves a client that replaces the apparent orphan before refresh untouched", function()
+        local old_path = "/tmp/private-old-audio.m4a"
+        local port = make_port{ status = daemon_status("playing", 20, 80, old_path) }
+        port:queue{ live = true, status = daemon_status("paused", 10, 90, "/other-client.mp3"), token = "other" }
+        local audio = make_audio{ port = port, starter = {
+            isOrphan = function(_, _, status) return status.path == old_path end,
+        } }
+        local opened, message = audio:open(AUDIO_PATH)
+        assert.is_nil(opened)
+        assert.are.equal("KinAMP is busy", message)
+        assert.are.equal(0, command_count(port, "stop"))
+        assert.are.equal(0, command_count(port, "load"))
+    end)
+
+    it("does not start audio if the ownership receipt cannot be written", function()
+        local port = make_port()
+        port:queue{ live = true, status = daemon_status("stopped", 0, 0, ""), token = "idle1" }
+        local audio, _, _, writer = make_audio{ port = port, starter = {
+            remember = function() return nil, "Unable to record read-along ownership" end,
+        } }
+        local opened, message = audio:open(AUDIO_PATH)
+        assert.is_nil(opened)
+        assert.are.equal("Unable to record read-along ownership", message)
+        assert.is_true(audio:getStatus().recoverable)
+        assert.are.equal(0, command_count(port, "load"))
+        assert.are.same({ writer.created[1].path }, writer.removed)
+    end)
 end)
