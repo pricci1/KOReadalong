@@ -122,7 +122,8 @@ local function make_playlist_writer(root)
             return nil, "unable to create KinAMP playlist"
         end
         local path = ffi.string(buffer)
-        local bytes = ffi.new("char[?]", #content, content)
+        -- Reserve the string initializer's NUL, but never write it to the M3U.
+        local bytes = ffi.new("char[?]", #content + 1, content)
         local offset = 0
         local write_error
         while offset < #content do

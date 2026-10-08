@@ -474,6 +474,28 @@ describe("KinAMP filesystem integration", function()
         assert.is_false(has_command(lines, "play"))
     end)
 
+    it("keeps short command batches intact across sends and garbage collection", function()
+        assert.is_true(audio:open(audio_path))
+        assert.is_true(pump(timer, function()
+            return audio:getStatus().state == "playing"
+        end, 2))
+        local expected = without_status(command_lines(read_file(daemon.command_log)))
+        for _ = 1, 64 do
+            -- Eight- and twelve-byte payloads hit the allocator boundaries
+            -- involved in the Kindle heap-overwrite regression.
+            assert.is_true(port:send{{ "seek", 10 }})
+            assert.is_true(port:send{{ "stop" }, { "status" }})
+            expected[#expected + 1] = "seek 10"
+            expected[#expected + 1] = "stop"
+            assert.is_true(wait_until(function()
+                return #without_status(command_lines(read_file(daemon.command_log))) == #expected
+            end, 1))
+            collectgarbage("collect")
+        end
+        assert.are.same(expected, without_status(command_lines(read_file(daemon.command_log))))
+        assert.are.equal("stopped", assert(port:readStatus()).state)
+    end)
+
     it("starts an absent service and reopens with either a shared idle or shut-down daemon", function()
         daemon:stop()
         os.remove(daemon.command_fifo)

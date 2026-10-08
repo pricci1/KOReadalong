@@ -153,7 +153,8 @@ local function open_fifo(path, flags)
 end
 
 local function write_fd(fd, payload)
-    local buffer = ffi.new("char[?]", #payload, payload)
+    -- A string initializer also copies its NUL, even for a variable-size array.
+    local buffer = ffi.new("char[?]", #payload + 1, payload)
     local written = C.write(fd, buffer, #payload)
     if written < 0 then
         return nil, ffi.errno()
