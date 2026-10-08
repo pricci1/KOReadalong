@@ -142,6 +142,13 @@ panel, or assign **Reader → KoReadalong: return to narration** in Gesture
 manager/Dispatcher, to jump back once and resume Following. Browsing is a
 transient session state and is not restored when the book is reopened.
 
+The panel's **Follow: on/off** control explicitly switches this same transient
+state while playing or paused, without changing audio or saved progress. Turning
+it on returns to the active text if available; otherwise it waits for the next
+valid narrated range. **Text highlighting unavailable** means narration is active
+but no current text range is resolved, not an audio failure. Embedded SMIL timing
+is used unchanged, even for unusually long clips.
+
 ### Assign a gesture
 
 The panel can be opened with any gesture supported by KOReader:

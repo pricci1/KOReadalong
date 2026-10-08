@@ -433,6 +433,23 @@ function KoReadalong:canReturnToNarration()
         and self:_latest_range() ~= nil
 end
 
+function KoReadalong:toggleFollowing()
+    if not active_narration(self) then
+        return nil, _("Narration is not active")
+    end
+    if self.follow_state == FOLLOWING then
+        self:_set_browsing()
+        return true
+    end
+    if self:_latest_range() then
+        return self:returnToNarration()
+    end
+    self:_cancel_navigation_guard()
+    self:_cancel_navigation_candidate()
+    self:_set_follow_state(FOLLOWING)
+    return true
+end
+
 function KoReadalong:returnToNarration()
     if not active_narration(self) then
         return nil, _("Narration is not active")
@@ -526,6 +543,9 @@ function KoReadalong:_show_playback_controls()
         end,
         get_return_enabled = function()
             return self:canReturnToNarration()
+        end,
+        on_follow = function()
+            return self:toggleFollowing()
         end,
         on_return = function()
             return self:returnToNarration()

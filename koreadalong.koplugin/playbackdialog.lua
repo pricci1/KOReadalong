@@ -102,11 +102,15 @@ function PlaybackDialog:init()
         math.min(Device.screen:getWidth(), Device.screen:getHeight()) * 0.72
     )
     self.status_text = TextBoxWidget:new{
-        text = state_label("idle", self:_get_follow_state()) .. "\n— / —",
+        text = state_label("paused", "browsing") .. "\n— / —\n"
+            .. _("Text highlighting unavailable"),
         width = status_width,
         alignment = "center",
         face = Font:getFace("smallinfofont"),
     }
+    -- Reserve the hint's measured height: parent groups cache their layout.
+    self.status_text.height = self.status_text:getSize().h
+    self.status_text:setText(state_label("idle", self:_get_follow_state()) .. "\n— / —")
     self.progress_bar = ProgressWidget:new{
         width = status_width,
         height = Device.screen:scaleBySize(14),
@@ -251,6 +255,20 @@ function PlaybackDialog:init()
         start_choices,
         {
             {
+                id = "follow",
+                text = _("Follow: on"),
+                enabled_func = function()
+                    local state = self.coordinator:getState()
+                    return type(self.on_follow) == "function"
+                        and (state == "playing" or state == "paused")
+                end,
+                callback = function()
+                    self:_run(function()
+                        return self.on_follow()
+                    end)
+                end,
+            },
+            {
                 id = "return_to_narration",
                 text = _("Return to narration"),
                 enabled_func = function()
@@ -311,12 +329,17 @@ function PlaybackDialog:_refresh(full_refresh)
     local status = self.coordinator:getPlaybackStatus()
     local position = status.position
     local duration = status.duration
-    self.status_text:setText(string.format(
+    local status_text = string.format(
         "%s\n%s / %s",
         state_label(status.state, self:_get_follow_state()),
         format_time(position),
         format_time(duration)
-    ))
+    )
+    if (status.state == "playing" or status.state == "paused")
+        and status.has_text_range == false then
+        status_text = status_text .. "\n" .. _("Text highlighting unavailable")
+    end
+    self.status_text:setText(status_text)
 
     local percentage = 0
     if type(position) == "number" and type(duration) == "number"
@@ -327,6 +350,9 @@ function PlaybackDialog:_refresh(full_refresh)
 
     local toggle_button = self:getButtonById("toggle")
     toggle_button:setText(action_label(status.state), toggle_button.width)
+    local follow_button = self:getButtonById("follow")
+    follow_button:setText(self:_get_follow_state() == "browsing"
+        and _("Follow: off") or _("Follow: on"), follow_button.width)
 
     if full_refresh or self.last_state ~= status.state then
         UIManager:setDirty(self, "ui", self.movable.dimen)

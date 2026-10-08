@@ -171,6 +171,14 @@ playback dialog renders the state and action with normal KOReader button sizing,
 and Dispatcher/Gesture Manager exposes the return action statically while its
 runtime handler performs the current-range check.
 
+**Follow: on/off** switches the same transient Following/Browsing state, never a
+persisted preference or audio mode. Off retains the latest valid range; on uses
+Return to narration when a range exists, otherwise enables future following
+without a navigation event. The coordinator status exposes `has_text_range`
+independently of transport state. Playing/paused with no range shows a calm text
+highlighting hint, not a backend error or repeated dialog. Clip duration does not
+imply timing confidence and no SMIL retiming or global offset is applied.
+
 The coordinator remains platform-neutral. Its only reader-facing additions are
 the narrow current-range accessor and range-cleared signal used to retain or
 discard the active XPointer; `mpvaudio.lua`, `kindleaudio.lua`, and

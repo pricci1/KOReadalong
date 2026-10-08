@@ -181,6 +181,7 @@ function PlaybackCoordinator:getPlaybackStatus()
         position = self.playback_position,
         duration = self.playback_duration,
         can_seek = self:isSeekEnabled(),
+        has_text_range = self.current_range ~= nil,
     }
 end
 

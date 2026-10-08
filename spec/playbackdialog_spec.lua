@@ -70,6 +70,10 @@ describe("playback dialog", function()
             function options:setText(text)
                 self.text = text
             end
+            function options:getSize()
+                local _, lines = self.text:gsub("\n", "")
+                return { w = self.width, h = self.height or (lines + 1) * 20 }
+            end
             return options
         end
         local vertical_group = simple_widget()
@@ -133,6 +137,7 @@ describe("playback dialog", function()
                 position = self.position,
                 duration = self.duration,
                 can_seek = self:isSeekEnabled(),
+                has_text_range = self.has_text_range,
             }
         end
         function coordinator:isSeekEnabled()
@@ -399,6 +404,57 @@ describe("playback dialog", function()
         assert.are.equal(0, reported)
     end)
 
+    it("shows unavailable text calmly without reporting an audio error", function()
+        local errors = 0
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+            on_error = function() errors = errors + 1 end,
+        }
+        assert.are.equal(60, dialog.status_text.height)
+        coordinator.has_text_range = false
+        for _, state in ipairs({ "playing", "paused" }) do
+            coordinator.state = state
+            dialog:_refresh(true)
+            assert.is_truthy(dialog.status_text.text:find("Text highlighting unavailable", 1, true))
+            assert.are.equal(60, dialog.status_text:getSize().h)
+        end
+        coordinator.has_text_range = true
+        dialog:_refresh(true)
+        assert.is_nil(dialog.status_text.text:find("Text highlighting unavailable", 1, true))
+        assert.are.equal(60, dialog.status_text:getSize().h)
+        coordinator.state = "error"
+        coordinator.has_text_range = false
+        dialog:_refresh(true)
+        assert.is_truthy(dialog.status_text.text:find("Unavailable", 1, true))
+        assert.is_nil(dialog.status_text.text:find("Text highlighting unavailable", 1, true))
+        assert.are.equal(0, errors)
+    end)
+
+    it("dispatches Follow in playing and paused states without transport actions", function()
+        local follow_state = "following"
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator,
+            scheduler = scheduler,
+            get_follow_state = function() return follow_state end,
+            on_follow = function()
+                follow_state = follow_state == "following" and "browsing" or "following"
+                return true
+            end,
+        }
+        for _, state in ipairs({ "playing", "paused" }) do
+            coordinator.state = state
+            assert.is_true(dialog:getButtonById("follow").enabled_func())
+            dialog.buttons[4][1].callback()
+            assert.are.equal("Follow: off", dialog:getButtonById("follow").text)
+            dialog.buttons[4][1].callback()
+            assert.are.equal("Follow: on", dialog:getButtonById("follow").text)
+            assert.are.equal(state, coordinator.state)
+        end
+        assert.are.equal(0, coordinator.toggle_count)
+        assert.are.equal(0, coordinator.stop_count)
+    end)
+
     it("shows following and browsing state without changing the transport", function()
         local follow_state = "following"
         coordinator.state = "playing"
@@ -433,7 +489,7 @@ describe("playback dialog", function()
         assert.are.equal("Paused · browsing\n0:30 / 2:00", dialog.status_text.text)
     end)
 
-    it("exposes a full-width return action and refreshes its enabled state", function()
+    it("exposes a return action and refreshes its enabled state", function()
         local return_enabled = false
         local returned = 0
         coordinator.state = "playing"
@@ -448,14 +504,13 @@ describe("playback dialog", function()
                 return true
             end,
         }
-        local return_row = dialog.buttons[4]
-        assert.are.equal(1, #return_row)
-        assert.are.equal("Return to narration", return_row[1].text)
-        assert.is_false(return_row[1].enabled_func())
+        local return_button = dialog.buttons[4][2]
+        assert.are.equal("Return to narration", return_button.text)
+        assert.is_false(return_button.enabled_func())
 
         return_enabled = true
-        assert.is_true(return_row[1].enabled_func())
-        return_row[1].callback()
+        assert.is_true(return_button.enabled_func())
+        return_button.callback()
         assert.are.equal(1, returned)
         assert.are.equal(1, #ui_manager.dirty)
     end)

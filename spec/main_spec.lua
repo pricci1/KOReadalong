@@ -585,6 +585,38 @@ describe("KoReadalong lifecycle and menu", function()
         assert.is_false(action.show_in_highlight_dialog_func())
     end)
 
+    it("toggles following without changing playing or paused transport", function()
+        plugin:onReaderReady()
+        for _, state in ipairs({ "playing", "paused" }) do
+            coordinator.state = state
+            plugin:_set_follow_state("following")
+            plugin.latest_range = { pos0 = "active", pos1 = "active-end" }
+            range_visible = false
+            local count = #goto_events
+            assert.is_true(plugin:toggleFollowing())
+            assert.are.equal("browsing", plugin.follow_state)
+            plugin.coordinator.options.on_range("latest", "latest-end")
+            assert.are.equal(count, #goto_events)
+            assert.is_true(plugin:toggleFollowing())
+            assert.are.equal("following", plugin.follow_state)
+            assert.are.equal("latest", goto_events[#goto_events].args[1])
+            assert.are.equal(state, coordinator.state)
+        end
+    end)
+
+    it("enables following without a range and waits for valid text", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        plugin:_set_browsing()
+        local count = #goto_events
+        assert.is_true(plugin:toggleFollowing())
+        assert.are.equal("following", plugin.follow_state)
+        assert.are.equal(count, #goto_events)
+        range_visible = false
+        plugin.coordinator.options.on_range("next", "next-end")
+        assert.are.equal(count + 1, #goto_events)
+    end)
+
     it("does not follow new ranges while browsing", function()
         plugin:onReaderReady()
         coordinator.state = "playing"
