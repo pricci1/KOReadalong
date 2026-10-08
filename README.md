@@ -102,9 +102,14 @@ reader, with Audiobook disabled, identified a KoReadalong heap overwrite:
 string-initialized variable-length FFI buffers omitted the terminating NUL's
 space. The FIFO and playlist allocations are fixed without sending that NUL.
 The short-command/garbage-collection regression crashed with the old port on
-the Kindle and passed with the fix. Connected native playback and close/reopen
-with this final fix still require acceptance; the candidate is not yet declared
-release-ready.
+the Kindle and passed with the fix. Connected native acceptance on the final
+fixed build then passed pause/resume, both 15-second seeks, six Stop/Start
+cycles, and three Home → Continue → Start → close cycles without a crash.
+The same reader process survived throughout; reopening did not start audio,
+and close released the session receipt and left the daemon absent. This is
+bounded stability evidence, not a guarantee against every crash. The earlier
+audible confirmation predates the fix: final-build listening confirmation
+remains the release gate, so the candidate is not yet declared release-ready.
 
 Orphan recovery passed automated regressions, a real-KinAMP backend test, and
 native Start in a reopened reader: it stopped the exact recorded orphan in the
