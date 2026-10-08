@@ -30,7 +30,44 @@ function Timeline.new(clips)
         resource_clips[#resource_clips + 1] = clip
         last_by_audio_path[clip.audio_path] = clip
     end
-    return setmetatable({ clips_by_audio_path = clips_by_audio_path }, Timeline)
+    local extents, chapters, chapter_count, duration = {}, {}, 0, 0
+    for _, clip in ipairs(clips) do
+        local extent = extents[clip.audio_path]
+        if not extent then
+            extent = { begin = clip.clip_begin, finish = clip.clip_end }
+            extents[clip.audio_path] = extent
+        end
+        extent.finish = math.max(extent.finish, clip.clip_end)
+        if clip.spine_index and not chapters[clip.spine_index] then
+            chapter_count = chapter_count + 1
+            chapters[clip.spine_index] = chapter_count
+        end
+    end
+    local seen = {}
+    for _, clip in ipairs(clips) do
+        if not seen[clip.audio_path] then
+            local extent = extents[clip.audio_path]
+            extent.offset = duration
+            duration = duration + extent.finish - extent.begin
+            seen[clip.audio_path] = true
+        end
+    end
+    return setmetatable({ clips_by_audio_path = clips_by_audio_path,
+        extents = extents, duration = duration, chapters = chapters,
+        chapter_count = chapter_count }, Timeline)
+end
+
+-- Overlay span includes gaps, excludes unreferenced leading/trailing audio.
+function Timeline:getBookProgress(audio_path, position)
+    local extent = self.extents[audio_path]
+    local elapsed
+    if extent and type(position) == "number" and position == position
+        and position > -math.huge and position < math.huge then
+        elapsed = extent.offset + math.max(0,
+            math.min(extent.finish - extent.begin, position - extent.begin))
+    end
+    local clip = self:lookup(audio_path, position)
+    return elapsed, self.duration, clip and self.chapters[clip.spine_index], self.chapter_count
 end
 
 -- Clip intervals are half-open: [clip_begin, clip_end).

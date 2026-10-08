@@ -176,8 +176,20 @@ function PlaybackCoordinator:getState()
 end
 
 function PlaybackCoordinator:getPlaybackStatus()
+    local book_position, book_duration, chapter, chapter_count
+    if self.timeline and type(self.timeline.getBookProgress) == "function" then
+        book_position, book_duration, chapter, chapter_count = self.timeline:getBookProgress(
+            self.current_audio_path, self.playback_position)
+        if self.state ~= "playing" and self.state ~= "paused" and self.state ~= "ended" then
+            book_position, chapter = nil, nil
+        end
+    end
     return {
         state = self.state,
+        book_position = book_position,
+        book_duration = book_duration,
+        chapter = chapter,
+        chapter_count = chapter_count,
         position = self.playback_position,
         duration = self.playback_duration,
         can_seek = self:isSeekEnabled(),

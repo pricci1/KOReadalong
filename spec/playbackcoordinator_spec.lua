@@ -442,6 +442,41 @@ local function saved_location(clip, pos0, pos1, position)
 end
 
 describe("playback coordinator", function()
+    it("exposes overlay progress without changing track clocks or probing resources", function()
+        local coordinator, _, adapter, materializer = make_fixture{
+            { audio_path = "a", clip_begin = 11, clip_end = 31,
+                spine_index = 3, text_fragment = "one" },
+            { audio_path = "b", clip_begin = 7, clip_end = 12,
+                spine_index = 5, text_fragment = "two" },
+        }
+        coordinator.current_audio_path = "b"
+        coordinator.playback_position = 10
+        coordinator.playback_duration = 100
+        for _, state in ipairs{ "playing", "paused" } do
+            coordinator.state = state
+            local status = coordinator:getPlaybackStatus()
+            assert.are.equal(23, status.book_position)
+            assert.are.equal(25, status.book_duration)
+            assert.are.equal(2, status.chapter)
+            assert.are.equal(2, status.chapter_count)
+            assert.are.equal(10, status.position)
+            assert.are.equal(100, status.duration)
+        end
+        for _, state in ipairs{ "idle", "loading", "stopping", "error" } do
+            coordinator.state = state
+            local status = coordinator:getPlaybackStatus()
+            assert.is_nil(status.book_position)
+            assert.is_nil(status.chapter)
+            assert.are.equal(25, status.book_duration)
+        end
+        coordinator.state = "ended"
+        coordinator.current_audio_path = nil
+        coordinator.playback_position = nil
+        assert.is_nil(coordinator:getPlaybackStatus().book_position)
+        assert.are.equal(0, #adapter.opens)
+        assert.are.same({}, materializer.paths)
+    end)
+
     it("retains the next distinct boundary across repeated audio targets", function()
         local clips = clips_fixture()
         clips[2].text_fragment = "one"
