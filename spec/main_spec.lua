@@ -327,6 +327,9 @@ describe("KoReadalong lifecycle and menu", function()
         package.preload["ui/widget/infomessage"] = function()
             return info_message
         end
+        package.preload["ui/widget/confirmbox"] = function()
+            return info_message
+        end
         package.preload["gettext"] = function()
             return function(value) return value end
         end
@@ -391,6 +394,8 @@ describe("KoReadalong lifecycle and menu", function()
             "ui/uimanager",
             "ui/event",
             "ui/widget/infomessage",
+            "ui/widget/confirmbox",
+            "kinamp_btdevices",
             "gettext",
             "ui/widget/container/widgetcontainer",
             "dispatcher",
@@ -509,7 +514,7 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal(2, #ui_manager.shown)
     end)
 
-    it("shows Kindle KinAMP recovery guidance and persistent setup help", function()
+    it("explains integrated Kindle startup and opens existing Bluetooth setup", function()
         is_kindle = true
         plugin:onReaderReady()
 
@@ -519,42 +524,29 @@ describe("KoReadalong lifecycle and menu", function()
         assert.is_function(items.kinamp_help.callback)
         items.kinamp_help.callback()
         assert.are.equal(1, #ui_manager.shown)
-        assert.matches("official KOReader plugin", ui_manager.shown[1].text)
-        assert.matches("installation", ui_manager.shown[1].text)
-        assert.matches("daemon lifecycle", ui_manager.shown[1].text)
+        assert.matches("official KinAMP plugin", ui_manager.shown[1].text)
+        assert.matches("automatically", ui_manager.shown[1].text)
         assert.matches("Bluetooth", ui_manager.shown[1].text)
-        assert.matches("playlists", ui_manager.shown[1].text)
-        assert.matches("management", ui_manager.shown[1].text)
-        assert.matches("never launches, kills, quits", ui_manager.shown[1].text)
+        assert.matches("Closing a book stops narration; reopening never starts audio", ui_manager.shown[1].text)
         assert.matches(
             "https://github.com/kbarni/KinAMP/blob/master/README.md",
             ui_manager.shown[1].text
         )
-
-        plugin.coordinator.options.on_error(
-            "KinAMP daemon is not running; start KinAMP first"
-        )
+        assert.are.equal("Bluetooth setup", ui_manager.shown[1].ok_text)
+        local opened = 0
+        package.loaded.kinamp_btdevices = { open = function() opened = opened + 1 end }
+        ui_manager.shown[1].ok_callback()
+        assert.are.equal(1, opened)
+        package.loaded.kinamp_btdevices = nil
+        package.preload.kinamp_btdevices = function() error("not installed") end
+        ui_manager.shown[1].ok_callback()
         assert.are.equal(2, #ui_manager.shown)
-        assert.is_truthy(ui_manager.shown[2].text:find(
-            "KinAMP isn’t running",
-            1,
-            true
-        ))
-        assert.matches("Tools → KinAMP Player", ui_manager.shown[2].text)
-        assert.matches("choose Stop playback", ui_manager.shown[2].text)
-        assert.is_truthy(ui_manager.shown[2].text:find(
-            "still-open EPUB",
-            1,
-            true
-        ))
-        assert.matches("press Start again", ui_manager.shown[2].text)
-        assert.matches("does not manage KinAMP", ui_manager.shown[2].text)
+        assert.matches("Bluetooth settings are unavailable", ui_manager.shown[2].text)
 
         plugin.coordinator.options.on_error("KinAMP is busy")
         assert.are.equal(3, #ui_manager.shown)
-        assert.matches("Stop the current KinAMP playback", ui_manager.shown[3].text)
-        assert.matches("other client", ui_manager.shown[3].text)
-        assert.matches("leave KinAMP idle", ui_manager.shown[3].text)
+        assert.matches("Another client is playing or paused", ui_manager.shown[3].text)
+        assert.matches("left it untouched", ui_manager.shown[3].text)
         assert.matches("press Start again", ui_manager.shown[3].text)
     end)
 

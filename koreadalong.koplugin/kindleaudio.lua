@@ -236,6 +236,10 @@ end
 function KindleAudio.new(options)
     options = options or {}
     local port = options.port or KinAMPPort.new(options.port_options)
+    local starter = options.starter
+    if starter == nil and not options.port then
+        starter = require("kinampservice").shared
+    end
     local root = options.playlist_root
     if not root and type(port.getRuntimeDir) == "function" then
         root = select(1, invoke(port, "getRuntimeDir"))
@@ -244,6 +248,8 @@ function KindleAudio.new(options)
 
     local self = setmetatable({
         port = port,
+        starter = starter,
+        service_start_timeout = options.service_start_timeout or 6,
         logger = options.logger or load_logger(),
         timer = options.timer or require("ui/uimanager"),
         clock = options.clock or function()
@@ -533,6 +539,7 @@ end
 
 function KindleAudio:_clear_resource()
     self.audio_path = nil
+    self.service_starting = false
     self.playlist_path = nil
     self.playlist_owned = false
     self.command_attempted = false
@@ -822,6 +829,24 @@ function KindleAudio:_poll()
         and not self.stop_requested and not self.stop_sent then
         return
     end
+    if self.service_starting then
+        local probe, probe_error = self:_probe()
+        if not probe then
+            self:_error(probe_error)
+            return
+        end
+        if not probe.live then
+            if self:_check_deadline(
+                "KinAMP did not become ready. Check its installation and audio dependencies, then try Start again."
+            ) then
+                self:_schedule()
+            end
+            return
+        end
+        self.service_starting = false
+        self.baseline_token = probe.token
+        self.deadline = self.clock() + self.startup_timeout
+    end
     local snapshot, error_message = self:_request_status()
     if not snapshot then
         self:_error(error_message)
@@ -917,9 +942,19 @@ function KindleAudio:open(path, options)
         return self:_error(probe_error)
     end
     if not probe.live then
-        return self:_error(
-            "KinAMP daemon is not running; start KinAMP first"
+        if not self.starter then
+            return self:_error("KinAMP daemon is not running; start KinAMP first")
+        end
+        local started, start_error = invoke(
+            self.starter, "start", self.port:getRuntimeDir()
         )
+        if not started then
+            return self:_error(start_error)
+        end
+        self.service_starting = true
+        self.deadline = self.clock() + self.service_start_timeout
+        self:_schedule()
+        return true
     end
     if probe.status
         and (probe.status.state == "playing"

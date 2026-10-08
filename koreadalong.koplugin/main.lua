@@ -14,7 +14,6 @@ local InfoMessage = require("ui/widget/infomessage")
 local UIManager = require("ui/uimanager")
 local _ = require("gettext")
 
-local KINAMP_MISSING_ERROR = "KinAMP daemon is not running; start KinAMP first"
 local KINAMP_BUSY_ERROR = "KinAMP is busy"
 local FOLLOWING = "following"
 local BROWSING = "browsing"
@@ -23,23 +22,17 @@ local EXPECTED_NAVIGATION_EVENTS = 8
 local INPUT_NAVIGATION_SECONDS = 0.75
 local RENDER_SUPPRESSION_SECONDS = 0.75
 
-local KINAMP_STARTUP_HELP = _([[KinAMP isn’t running.
-
-Open Tools → KinAMP Player, start it, then choose Stop playback so the daemon remains running and idle. Return to the still-open EPUB and press Start again.
-
-KoReadalong uses KinAMP for Kindle audio but does not manage KinAMP itself.]])
-
 local KINAMP_BUSY_HELP = _([[KinAMP is busy.
 
-Stop the current KinAMP playback or other client, leave KinAMP idle, and press Start again.]])
+Another client is playing or paused. KoReadalong has left it untouched. Stop that playback when you are ready, then press Start again.]])
 
 local KINAMP_HELP = _([[KinAMP setup and help
 
-KinAMP is the official KOReader plugin for Kindle audio. It owns installation, daemon lifecycle, Bluetooth, playlists, and management.
+Install and enable the official KinAMP plugin and player separately, then restart KOReader.
 
-Open Tools → KinAMP Player to manage KinAMP. For KoReadalong, start the player and choose Stop playback so the daemon remains running and idle before pressing Start in Read along.
+Read along starts the audio service automatically. Use KoReadalong to pause, seek and stop. Closing a book stops narration; reopening never starts audio.
 
-KoReadalong owns only its temporary read-along playlist and session. It never launches, kills, quits, or otherwise manages the KinAMP daemon.
+Connect your audio device using Bluetooth setup, which opens KinAMP’s existing settings. KoReadalong does not change the radio or replace another client’s playback.
 
 Official KinAMP documentation:
 https://github.com/kbarni/KinAMP/blob/master/README.md]])
@@ -504,12 +497,7 @@ end
 function KoReadalong:_show_error(error_message)
     local message = tostring(error_message)
     if Device:isKindle() then
-        if message == KINAMP_MISSING_ERROR then
-            UIManager:show(InfoMessage:new{
-                text = KINAMP_STARTUP_HELP,
-            })
-            return
-        elseif message == KINAMP_BUSY_ERROR then
+        if message == KINAMP_BUSY_ERROR then
             UIManager:show(InfoMessage:new{
                 text = KINAMP_BUSY_HELP,
             })
@@ -522,8 +510,17 @@ function KoReadalong:_show_error(error_message)
 end
 
 function KoReadalong:_show_kinamp_help()
-    UIManager:show(InfoMessage:new{
+    UIManager:show(require("ui/widget/confirmbox"):new{
         text = KINAMP_HELP,
+        ok_text = _("Bluetooth setup"),
+        ok_callback = function()
+            local ok, settings = pcall(require, "kinamp_btdevices")
+            if ok and type(settings.open) == "function" then
+                settings.open()
+            else
+                self:_show_error(_("KinAMP Bluetooth settings are unavailable. Install and enable the official KinAMP plugin, then restart KOReader."))
+            end
+        end,
     })
 end
 

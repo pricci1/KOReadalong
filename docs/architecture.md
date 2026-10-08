@@ -326,12 +326,32 @@ is an external GPLv3+ dependency; protocol interoperability is based on the
 public [KinAMP project](https://github.com/kbarni/KinAMP), and no KinAMP source
 is bundled or copied into KoReadalong.
 
+`kinampservice.lua` supplies the Kindle adapter's native startup boundary. It
+reuses the enabled official plugin's `kinamp_config.bin_folder` discovery and
+the installed player flavour/library contract. The official shell launcher
+terminates existing daemons, while its private Lua startup helper changes
+Bluetooth; neither offers a safe public idle-start API. Instead, this boundary
+starts the externally installed minimal executable with `--idle`, asynchronously,
+only after FIFO and process absence checks. A shared startup PID guard covers
+reader transitions before IPC is published. Existing processes with broken IPC
+are not replaced. The adapter polls for readiness for six seconds, then requires
+fresh stopped status before creating a playlist or sending playback commands.
+Missing installation, startup failure, and busy playback are recoverable before
+resource acquisition. There is no atomic cross-client claim in KinAMP's protocol;
+concurrent external launchers are not supported.
+
+Stop and document close still release only owned audio and temporary resources.
+Neither the starter nor the port quits/kills a daemon or pairs Bluetooth devices.
+The official plugin remains responsible for idle shutdown. If it shuts down on
+a reader/file-manager transition, the next explicit Start arranges readiness
+again rather than patching its handlers or running a competing lifecycle manager.
+
 `main.lua` selects the audio adapter with `Device:isKindle()` and lazily
 requires only the selected adapter; device selection remains outside the
-platform-neutral playback coordinator. On Kindle, it maps recoverable missing
-or busy preflight errors to focused native prompts and exposes persistent
-KinAMP setup/help alongside the Read along menu item; desktop/mpv errors remain
-unchanged. Operator setup, troubleshooting, workarounds, and physical
+platform-neutral playback coordinator. On Kindle, it maps busy preflight errors
+to a focused native prompt and exposes persistent KinAMP setup/help with a button
+opening the official `kinamp_btdevices.open()` settings; desktop/mpv errors remain
+unchanged. Installation, troubleshooting, workarounds, and physical
 validation are documented in the [Kindle/KinAMP section of the README](../README.md).
 
 ## Tooling

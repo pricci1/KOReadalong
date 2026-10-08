@@ -474,6 +474,55 @@ describe("KinAMP filesystem integration", function()
         assert.is_false(has_command(lines, "play"))
     end)
 
+    it("starts an absent service and reopens with either a shared idle or shut-down daemon", function()
+        daemon:stop()
+        os.remove(daemon.command_fifo)
+        os.remove(daemon.status_file)
+        local starts = 0
+        local starter = { start = function(_, runtime)
+            assert.are.equal(runtime_dir, runtime)
+            starts = starts + 1
+            daemon = FakeKinAMP.new(runtime_dir, audio_path)
+            return true
+        end }
+        local function reopen()
+            port = KinAMPPort.new{ runtime_dir = runtime_dir }
+            audio = KindleAudio.new{
+                port = port, starter = starter, timer = timer, clock = monotonic,
+                playlist_root = runtime_dir, poll_interval = 0.01,
+                startup_timeout = 1, service_start_timeout = 1,
+            }
+            assert.are.equal("idle", audio:getStatus().state)
+            assert.is_true(audio:open(audio_path))
+            assert.is_true(pump(timer, function()
+                return audio:getStatus().state == "playing"
+            end, 2), tostring(audio:getStatus().error))
+        end
+        local function close()
+            local playlist = audio.playlist_path
+            assert.is_true(audio:close())
+            assert.is_true(pump(timer, function() return audio.close_finished end, 2))
+            assert.is_nil(path_mode(playlist))
+            assert.is_true(port.closed)
+            local status = KinAMPPort.new{ runtime_dir = runtime_dir }:probe()
+            assert.is_true(status.live)
+            assert.are.equal("stopped", status.status.state)
+        end
+        reopen()
+        assert.are.equal(1, starts)
+        close()
+        reopen()
+        assert.are.equal(1, starts, "must reuse the shared idle daemon")
+        close()
+        -- Model the official plugin quitting an idle daemon on reader teardown.
+        daemon:stop()
+        os.remove(daemon.command_fifo)
+        os.remove(daemon.status_file)
+        reopen()
+        assert.are.equal(2, starts)
+        assert.is_false(has_command(command_lines(read_file(daemon.command_log)), "quit"))
+    end)
+
     it("detects daemon disappearance instead of trusting its stale status file", function()
         assert.is_true(audio:open(audio_path))
         local ready = pump(timer, function()

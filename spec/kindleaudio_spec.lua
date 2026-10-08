@@ -129,6 +129,9 @@ local function make_port(options)
         self.closes = self.closes + 1
         return true
     end
+    function port:getRuntimeDir()
+        return "/tmp"
+    end
     return port
 end
 
@@ -166,6 +169,8 @@ local function make_audio(options)
         playlist_writer = writer,
         logger = logger,
         startup_timeout = options.startup_timeout or 2,
+        starter = options.starter,
+        service_start_timeout = options.service_start_timeout or 1,
         close_timeout = options.close_timeout or 2,
         poll_interval = options.poll_interval or 0.2,
     }
@@ -297,7 +302,7 @@ describe("KinAMP Kindle audio adapter", function()
         assert.is_true(os.remove(playlist_path))
     end)
 
-    it("requires an already-running daemon and does not launch one", function()
+    it("reports missing playback when no startup service is supplied", function()
         local audio, _, port, writer = make_audio{
             port = make_port{ live = false },
         }
@@ -308,6 +313,87 @@ describe("KinAMP Kindle audio adapter", function()
         assert.is_nil(audio.timer.tasks[audio.poll_action])
         assert.are.equal(0, #writer.created)
         assert.is_nil(port.start)
+    end)
+
+    it("starts asynchronously once and requires fresh idle readiness before playback", function()
+        local launches = 0
+        local starter = { start = function(_, runtime)
+            assert.are.equal("/tmp", runtime)
+            launches = launches + 1
+            return true
+        end }
+        local audio, timer, port, writer = make_audio{
+            live = false, starter = starter,
+        }
+        assert.is_true(audio:open(AUDIO_PATH, { position = 27.6 }))
+        tick(timer, 2)
+        assert.are.equal("loading", audio:getStatus().state)
+        assert.are.equal(1, launches)
+        assert.are.equal(0, #port.commands)
+        assert.are.equal(0, #writer.created)
+        assert.is_nil(audio:open(AUDIO_PATH))
+        assert.are.equal(1, launches)
+
+        port.live = true
+        tick(timer)
+        assert.are.equal(0, #writer.created)
+        port:queue{ live = true, token = "ready", status = daemon_status("stopped", 0, 0, "") }
+        tick(timer)
+        assert.are.same({
+            { "load", writer.created[1].path }, { "index", 0 }, { "seek", 28 },
+        }, batch_with(port, "load"))
+        port:queue{ live = true, token = "playing", status = daemon_status("playing", 28, 90, AUDIO_PATH) }
+        tick(timer)
+        assert.are.equal("playing", audio:getStatus().state)
+    end)
+
+    it("refuses a client that becomes busy during startup without loading or stopping it", function()
+        for _, state in ipairs{ "playing", "paused" } do
+            local audio, timer, port, writer = make_audio{
+                live = false, starter = { start = function() return true end },
+            }
+            assert.is_true(audio:open(AUDIO_PATH))
+            port.live = true
+            port.status = daemon_status(state, 14, 90, "/other/client.mp3")
+            tick(timer)
+            assert.are.equal("KinAMP is busy", audio:getStatus().error)
+            assert.is_true(audio:getStatus().recoverable)
+            assert.are.equal(0, #writer.created)
+            assert.is_true(audio:close())
+            assert.are.equal(0, command_count(port, "stop"))
+            assert.are.equal(0, command_count(port, "load"))
+        end
+    end)
+
+    it("times out startup recoverably and cancels on close without commanding the daemon", function()
+        local audio, timer, port, writer = make_audio{
+            live = false, starter = { start = function() return true end },
+        }
+        assert.is_true(audio:open(AUDIO_PATH))
+        tick(timer, 6)
+        assert.matches("did not become ready", audio:getStatus().error)
+        assert.is_true(audio:getStatus().recoverable)
+        assert.is_nil(timer.tasks[audio.poll_action])
+        assert.is_true(audio:stop())
+        assert.is_true(audio:open(AUDIO_PATH))
+        assert.is_true(audio:close())
+        port.live = true
+        tick(timer, 8)
+        assert.are.equal(0, #writer.created)
+        assert.are.equal(0, #port.commands)
+        assert.are.equal(1, port.closes)
+    end)
+
+    it("reports installation or launch failure before acquiring playback resources", function()
+        local audio, _, port, writer = make_audio{
+            live = false, starter = { start = function() return nil, "KinAMP player is missing" end },
+        }
+        local opened, message = audio:open(AUDIO_PATH)
+        assert.is_nil(opened)
+        assert.are.equal("KinAMP player is missing", message)
+        assert.is_true(audio:getStatus().recoverable)
+        assert.are.equal(0, #writer.created)
+        assert.are.equal(0, #port.commands)
     end)
 
     it("retries a missing-daemon preflight after resetting the adapter", function()
