@@ -366,6 +366,29 @@ local function saved_location(clip, pos0, pos1, position)
 end
 
 describe("playback coordinator", function()
+    it("retains the next distinct boundary across repeated audio targets", function()
+        local clips = clips_fixture()
+        clips[2].text_fragment = "one"
+        local distinct = {}
+        for key, value in pairs(clips[2]) do
+            distinct[key] = value
+        end
+        distinct.text_fragment = "two"
+        table.insert(clips, 3, distinct)
+        local coordinator = make_fixture(clips)
+        assert.are.equal(clips[3], coordinator:_next_clip(1))
+        assert.are.equal(clips[3], coordinator:_next_clip(2))
+        assert.is_nil(coordinator:_next_clip(3))
+        clips[3].spine_index = 1
+        assert.is_nil(coordinator:_next_clip(1))
+        clips[3].spine_index = 0
+        clips[3].text_path = "book/other.xhtml"
+        assert.is_nil(coordinator:_next_clip(1))
+        clips[3].text_path = clips[1].text_path
+        clips[3].text_fragment = "one"
+        assert.is_nil(coordinator:_next_clip(1))
+    end)
+
     it("does not touch dependencies for a document without overlays", function()
         local scheduler = make_scheduler()
         local adapter = make_adapter()

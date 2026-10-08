@@ -99,7 +99,14 @@ after the underscore) and uses only the injected CRe operations
 `getNextVisibleChar`, `getTextFromXPointers`, and `compareXPointers`.
 
 The resolver supports ordinary unique sentence/word IDs whose target has
-non-empty, visibly rendered inline text. It accepts a range only when the
+non-empty, visibly rendered inline text, including formatted inline children.
+Inline node transitions may advance the XPointer without adding extracted
+bytes; every transition must strictly advance in document order and counts
+toward the total 4096-step cap. Decreasing lengths and byte-prefix mismatches
+still fail closed. Consecutive audio clips may repeat the same sentence ID:
+the coordinator keeps the next distinct target as the boundary, stopping its
+lookahead at a change in text path or spine context.
+It accepts a range only when the
 recovered text is an exact byte-for-byte match, with ordered XPointers and an
 optional next-target boundary. It does not normalize text, search globally,
 or approximate a match. Web Text Fragments, empty/whitespace, hidden,

@@ -371,9 +371,15 @@ function PlaybackCoordinator:_fail(error_message, skip_stop)
 end
 
 function PlaybackCoordinator:_next_clip(index)
-    local next_clip = self.clips[index + 1]
-    if same_resolver_context(self.clips[index], next_clip) then
-        return next_clip
+    local clip = self.clips[index]
+    for next_index = index + 1, #self.clips do
+        local next_clip = self.clips[next_index]
+        if not same_resolver_context(clip, next_clip) then
+            return nil
+        end
+        if next_clip.text_fragment ~= clip.text_fragment then
+            return next_clip
+        end
     end
     return nil
 end

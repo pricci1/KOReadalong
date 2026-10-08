@@ -95,6 +95,44 @@ local function fake_document(content, targets, behavior)
 end
 
 describe("Storyteller fragment resolver", function()
+    it("allows inline transitions with equal byte lengths but retains all guards", function()
+        local targets = {
+            ["#_doc_fragment_0_ target"] = { start = 1, text = "ab" },
+            ["#_doc_fragment_0_ next"] = { start = 5, text = "c" },
+        }
+        local ranges = { [2] = "", [3] = "a", [4] = "a", [5] = "ab" }
+        local document = fake_document("", targets, {
+            range_text = function(_, finish)
+                return ranges[tonumber(finish:sub(2))] or "a"
+            end,
+        })
+        local result, err = FragmentResolver.resolve(document, clip(0, "target"), clip(0, "next"))
+        assert.is_nil(err)
+        assert.are.equal("p5", result.pos1)
+
+        result, err = FragmentResolver.resolve(document, clip(0, "target"), nil, { max_steps = 3 })
+        assert.is_nil(result)
+        assert.matches("step cap exceeded", err)
+
+        ranges[4] = ""
+        result, err = FragmentResolver.resolve(document, clip(0, "target"))
+        assert.is_nil(result)
+        assert.matches("did not advance", err)
+
+        ranges[4] = "x"
+        result, err = FragmentResolver.resolve(document, clip(0, "target"))
+        assert.is_nil(result)
+        assert.matches("not a byte%-prefix", err)
+
+        ranges[4], ranges[5] = "a", "a"
+        result, err = FragmentResolver.resolve(document, clip(0, "target"), clip(0, "next"))
+        assert.is_nil(result)
+        assert.matches("boundary crossed", err)
+        result, err = FragmentResolver.resolve(document, clip(0, "target"), nil, { max_steps = 8 })
+        assert.is_nil(result)
+        assert.matches("step cap exceeded", err)
+    end)
+
     it("resolves one-character, word, and sentence ranges with half-open ends", function()
         local document = fake_document("A word sentence.", {
             ["#_doc_fragment_0_ letter"] = { start = 1, text = "A" },

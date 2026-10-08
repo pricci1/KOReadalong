@@ -44,7 +44,7 @@ for audio_name in ("first.wav", "second.wav"):
         audio.setnchannels(1)
         audio.setsampwidth(2)
         audio.setframerate(8000)
-        audio.writeframes(b"\0\0" * 16000)
+        audio.writeframes(b"\0\0" * (48000 if audio_name == "first.wav" else 16000))
 
 files = {
     "mimetype": "application/epub+zip",
@@ -66,11 +66,13 @@ files = {
 </package>
 """,
     "book/first.xhtml": """<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml"><body><p><span id="first-sentence">The first smoke test chapter.</span></p></body></html>
+<html xmlns="http://www.w3.org/1999/xhtml"><body><p><span id="first-sentence">The first <i>smoke</i> test <b>chapter</b>.</span> <span id="next-sentence">Another formatted <em>sentence</em>.</span></p></body></html>
 """,
     "book/first.smil": """<?xml version="1.0" encoding="UTF-8"?>
 <smil xmlns="http://www.w3.org/ns/SMIL"><body><seq>
   <par><text src="first.xhtml#first-sentence"/><audio src="first.wav" clipBegin="0s" clipEnd="2s"/></par>
+  <par><text src="first.xhtml#first-sentence"/><audio src="first.wav" clipBegin="2s" clipEnd="4s"/></par>
+  <par><text src="first.xhtml#next-sentence"/><audio src="first.wav" clipBegin="4s" clipEnd="6s"/></par>
 </seq></body></smil>
 """,
     "book/second.xhtml": """<?xml version="1.0" encoding="UTF-8"?>
@@ -185,13 +187,35 @@ function Smoke:onReaderReady()
         return self.document:getDocumentFileContent(path)
     end)
     assert(clips, parse_error)
-    assert(#clips == 2, "expected two smoke clips")
+    assert(#clips == 4, "expected four smoke clips")
 
     local direct_range, direct_error = FragmentResolver.resolve(
         self.document,
-        clips[1]
+        clips[1],
+        clips[3]
     )
     assert(direct_range, direct_error)
+    local expected_text = {
+        "The first smoke test chapter.",
+        "The first smoke test chapter.",
+        "Another formatted sentence.",
+        "The second smoke test chapter.",
+    }
+    local expected_ranges = {}
+    for index, clip in ipairs(clips) do
+        local boundary = index < 3 and clips[3] or nil
+        local range, err = FragmentResolver.resolve(self.document, clip, boundary)
+        assert(range, err)
+        assert(self.document:getTextFromXPointers(range.pos0, range.pos1)
+            == expected_text[index], "unexpected independently specified range text")
+        assert(self.document:compareXPointers(range.pos0, range.pos1) == 1)
+        expected_ranges[index] = range
+    end
+    assert(expected_ranges[1].pos0 == expected_ranges[2].pos0)
+    assert(expected_ranges[1].pos1 == expected_ranges[2].pos1)
+    assert(self.document:compareXPointers(expected_ranges[1].pos1,
+        expected_ranges[3].pos0) ~= -1, "distinct boundary crossed")
+    logger.info("SMOKE_COMPAT inline=true repeated_targets=true exact_ranges=4")
     logger.info("SMOKE_RESOLVE ok=true text="
         .. self.document:getTextFromXPointer("#_doc_fragment_0_ first-sentence"))
 
@@ -339,7 +363,7 @@ function Smoke:onReaderReady()
         refresh_follow_state()
         local second_range, second_error = FragmentResolver.resolve(
             self.document,
-            clips[2]
+            clips[4]
         )
         if not second_range then
             fail("browse target resolve failed: " .. tostring(second_error))
@@ -397,6 +421,12 @@ function Smoke:onReaderReady()
     local function check_navigation()
         navigation_attempts = navigation_attempts + 1
         local status = adapter:getStatus()
+        for index, range in pairs(coordinator.range_cache) do
+            if range then
+                assert(range.pos0 == expected_ranges[index].pos0)
+                assert(range.pos1 == expected_ranges[index].pos1)
+            end
+        end
         if not browse_started and not browse_scheduled
             and coordinator.current_clip_index == 1
             and coordinator.range_cache[1]
@@ -407,9 +437,12 @@ function Smoke:onReaderReady()
             end)
             UIManager:scheduleIn(0.45, browse_away)
         end
-        if coordinator.current_clip_index == 2
-            and coordinator.range_cache[2]
+        if coordinator.current_clip_index == 4
+            and coordinator.range_cache[4]
             and status.state == "playing" then
+            assert(coordinator.range_cache[1] and coordinator.range_cache[2]
+                and coordinator.range_cache[3], "formatted/repeated clips were not played")
+            logger.info("SMOKE_COMPAT_PLAYBACK clips=4 ranges=true")
             if type(status.position) ~= "number" or status.position <= 0 then
                 fail("expected second-chapter playback position")
                 return
@@ -434,7 +467,7 @@ function Smoke:onReaderReady()
             UIManager:scheduleIn(0.2, check_eof)
             return
         end
-        if navigation_attempts >= 40 then
+        if navigation_attempts >= 60 then
             fail("expected transition to second chapter; coordinator="
                 .. coordinator:getState() .. " audio=" .. status.state
                 .. " clip=" .. tostring(coordinator.current_clip_index))
@@ -451,9 +484,11 @@ LUA
 mkdir -p "$runtime_plugins"
 ln -sfn "$smoke_root/koreadalongsmoke.koplugin" "$plugin_link"
 
+mkdir -p "$smoke_root/home/.config"
 status=0
+HOME="$smoke_root/home" XDG_CONFIG_HOME="$smoke_root/home/.config" \
 KOREADALONG_SMOKE_OWNED_DIRS="$owned_dirs" \
-    timeout 15s xvfb-run -a "$repo_root/scripts/run-koreader" -d "$epub" \
+    timeout 20s xvfb-run -a "$repo_root/scripts/run-koreader" -d "$epub" \
     >"$run_log" 2>&1 9>&- || status=$?
 cat "$run_log"
 if [[ "$status" -ne 0 ]]; then
@@ -462,6 +497,8 @@ if [[ "$status" -ne 0 ]]; then
 fi
 
 grep -F "SMOKE_RESOLVE ok=true" "$run_log" >/dev/null
+grep -F "SMOKE_COMPAT inline=true repeated_targets=true exact_ranges=4" "$run_log" >/dev/null
+grep -F "SMOKE_COMPAT_PLAYBACK clips=4 ranges=true" "$run_log" >/dev/null
 grep -F "SMOKE_PLAYBACK state=playing" "$run_log" >/dev/null
 grep -F "SMOKE_NAVIGATION chapter=2 range_visible=true" "$run_log" >/dev/null
 grep -F "SMOKE_BROWSE state=browsing snap_back=false" "$run_log" >/dev/null

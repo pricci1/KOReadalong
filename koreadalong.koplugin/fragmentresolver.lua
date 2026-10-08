@@ -268,7 +268,9 @@ function FragmentResolver.resolve(document, clip, next_clip, options)
         if target_text:sub(1, #range_text) ~= range_text then
             return nil, error_message("recovered range text is not a byte-prefix")
         end
-        if #range_text <= #recovered_text then
+        -- Inline node transitions can advance the pointer without adding bytes.
+        -- Every transition still consumes a step and must advance in document order.
+        if #range_text < #recovered_text then
             return nil, error_message("recovered range text did not advance")
         end
         recovered_text = range_text
