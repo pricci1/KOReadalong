@@ -310,6 +310,82 @@ local function make_fixture(clips, options)
         ranges_shown, ranges_cleared
 end
 
+describe("chapter-scoped lookup", function()
+    local function fixture()
+        local clips = {}
+        for index = 1, 200 do
+            clips[index] = {
+                text_path = "chapter" .. index,
+                text_fragment = "target" .. index,
+                spine_index = index - 1,
+                audio_path = "audio", clip_begin = index, clip_end = index + 1,
+                range_start = index * 10, range_end = index * 10 + 5,
+            }
+        end
+        -- A non-overlay spine item separates the last two narrated chapters.
+        clips[200].spine_index = 200
+        local coordinator, _, _, _, resolver = make_fixture(clips)
+        resolver.getSpineIndex = require("fragmentresolver").getSpineIndex
+        function coordinator.document:getNormalizedXPointer(pointer)
+            local position = tonumber(pointer:match("^p(%d+)$"))
+            if not position or position == 1991 then return false end
+            local spine = math.floor(position / 10) - 1
+            if position >= 1995 and position < 2000 then spine = 199 end
+            if position >= 2000 then spine = 200 end
+            return "/body/DocFragment[" .. (spine + 1) .. "]/body/p[1]/text().0"
+        end
+        return coordinator, resolver
+    end
+
+    it("resolves only the late chapter and reuses cached ranges across lookup paths", function()
+        local coordinator, resolver = fixture()
+        assert.are.equal(199, coordinator:_find_clip_for_selection("p1992", "p1993"))
+        assert.are.equal(1, #resolver.calls)
+        assert.are.equal(199, coordinator:findClipAtOrAfterXPointer("p1992"))
+        assert.are.equal(1, #resolver.calls)
+        assert.is_nil(coordinator:_find_clip_for_selection("p1995", "p1996"))
+        assert.are.equal(1, #resolver.calls)
+        assert.are.equal(200, coordinator:findClipAtOrAfterXPointer("p1995"))
+        assert.are.equal(2, #resolver.calls)
+    end)
+
+    it("keeps cross-chapter half-open boundaries and skips unsupported targets", function()
+        local coordinator, resolver = fixture()
+        resolver.fail.target199 = true
+        assert.are.equal(200, coordinator:_find_clip_for_selection("p1992", "p2001"))
+        assert.are.equal(2, #resolver.calls)
+        local other, calls = fixture()
+        assert.is_nil(other:_find_clip_for_selection("p1995", "p2000"))
+        assert.are.equal(1, #calls.calls)
+    end)
+
+    it("falls back to timeline order for an unknown start context", function()
+        local coordinator, resolver = fixture()
+        assert.are.equal(199, coordinator:findClipAtOrAfterXPointer("p1991"))
+        assert.are.equal(199, #resolver.calls)
+        coordinator, resolver = fixture()
+        assert.are.equal(199, coordinator:_find_clip_for_selection("p1991", "p1993"))
+        assert.are.equal(199, #resolver.calls)
+    end)
+
+    it("narrows a cold current lookup without sorting non-monotonic or repeated targets", function()
+        local coordinator, resolver = fixture()
+        assert.are.equal(199, coordinator:findClipAtOrAfterXPointer("p1992"))
+        assert.are.equal(1, #resolver.calls)
+        coordinator, resolver = fixture()
+        coordinator.clips[198].spine_index = 198
+        coordinator.clips[198].range_start = 1993
+        coordinator.clips[198].range_end = 1995
+        -- Timeline's first valid intersection wins even though the next target
+        -- starts earlier in document order.
+        assert.are.equal(198, coordinator:_find_clip_for_selection("p1992", "p1994"))
+        assert.are.equal(1, #resolver.calls)
+        coordinator.clips[199].text_fragment = coordinator.clips[198].text_fragment
+        assert.are.equal(198, coordinator:findClipAtOrAfterXPointer("p1992"))
+        assert.are.equal(1, #resolver.calls)
+    end)
+end)
+
 local function clips_fixture()
     return {
         {

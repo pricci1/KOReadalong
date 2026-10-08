@@ -95,6 +95,24 @@ local function fake_document(content, targets, behavior)
 end
 
 describe("Storyteller fragment resolver", function()
+    it("recognizes only normalized CRe EPUB chapter contexts", function()
+        local document = { getNormalizedXPointer = function(_, pointer) return pointer end }
+        assert.are.equal(5, FragmentResolver.getSpineIndex(document,
+            "/body/DocFragment[6]/body/p[2]/span[1]/text()[1].0"))
+        assert.are.equal(0, FragmentResolver.getSpineIndex(document, "/body/DocFragment[1]/body"))
+        for _, pointer in ipairs{
+            "/body/DocFragment[0]/body/p[1]", "/body/DocFragment[6]/other/p[1]",
+            "/body/p[1]", "#id", "/body/DocFragment[6]",
+        } do
+            assert.is_nil(FragmentResolver.getSpineIndex(document, pointer))
+        end
+        assert.is_nil(FragmentResolver.getSpineIndex({}, "anything"))
+        document.getNormalizedXPointer = function() error("unavailable") end
+        assert.is_nil(FragmentResolver.getSpineIndex(document, "anything"))
+        document.getNormalizedXPointer = function() return false end
+        assert.is_nil(FragmentResolver.getSpineIndex(document, "anything"))
+    end)
+
     it("allows inline transitions with equal byte lengths but retains all guards", function()
         local targets = {
             ["#_doc_fragment_0_ target"] = { start = 1, text = "ab" },

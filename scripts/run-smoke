@@ -209,6 +209,10 @@ function Smoke:onReaderReady()
         assert(self.document:getTextFromXPointers(range.pos0, range.pos1)
             == expected_text[index], "unexpected independently specified range text")
         assert(self.document:compareXPointers(range.pos0, range.pos1) == 1)
+        assert(FragmentResolver.getSpineIndex(self.document, range.pos0) == clip.spine_index,
+            "normalized CRe start context differs from parser spine index")
+        assert(FragmentResolver.getSpineIndex(self.document, range.pos1) == clip.spine_index,
+            "normalized CRe end context differs from parser spine index")
         expected_ranges[index] = range
     end
     assert(expected_ranges[1].pos0 == expected_ranges[2].pos0)

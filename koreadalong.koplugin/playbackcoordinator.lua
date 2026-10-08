@@ -477,11 +477,38 @@ function PlaybackCoordinator:_find_first_valid_clip()
     return nil, nil, "no valid narrated segment"
 end
 
+function PlaybackCoordinator:_lookup_candidates(pos0, pos1)
+    local context = self.resolver and self.resolver.getSpineIndex
+    local first, last
+    if type(context) == "function" then
+        local ok, spine = pcall(context, self.document, pos0)
+        if ok and finite_number(spine) and spine >= 0 and spine == math.floor(spine) then
+            first = spine
+        end
+        if pos1 then
+            ok, spine = pcall(context, self.document, pos1)
+            if ok and finite_number(spine) and spine >= 0 and spine == math.floor(spine) then
+                last = spine
+            end
+        end
+    end
+    -- Metadata only: never resolve skipped chapters, and never assume target
+    -- order within a chapter. Unknown contexts retain the generic search.
+    local candidates = {}
+    for index, clip in ipairs(self.clips) do
+        if (not first or not finite_number(clip.spine_index) or clip.spine_index >= first)
+            and (not last or not finite_number(clip.spine_index) or clip.spine_index <= last) then
+            candidates[#candidates + 1] = index
+        end
+    end
+    return candidates
+end
+
 function PlaybackCoordinator:findClipAtOrAfterXPointer(pointer)
     if not valid_xpointer(pointer) then
         return nil, nil, "reading position has no valid XPointer"
     end
-    for index = 1, #self.clips do
+    for _, index in ipairs(self:_lookup_candidates(pointer)) do
         local range = self:_get_range(index)
         if range then
             local current_before_range_end, compare_error = compare_xpointers(
@@ -621,7 +648,7 @@ function PlaybackCoordinator:_find_clip_for_selection(pos0, pos1)
         return nil, nil, "selected text has an empty or reversed XPointer range"
     end
 
-    for index = 1, #self.clips do
+    for _, index in ipairs(self:_lookup_candidates(pos0, pos1)) do
         local range = self:_get_range(index)
         if range then
             -- Ranges are half-open. Strict comparisons exclude a selection

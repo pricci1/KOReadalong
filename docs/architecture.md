@@ -130,6 +130,20 @@ resolved clip ranges, so page numbers, screen boxes, and transient rendering
 state do not affect start selection. Opening the document only constructs the
 coordinator; it never starts audio.
 
+Current-position and selection lookups ask `fragmentresolver.getSpineIndex`
+for an optional exact chapter context. The resolver calls CRe's
+`getNormalizedXPointer` and recognizes only `/body/DocFragment[N]/body`
+wrappers, mapping one-based `N` to the parser's zero-based spine index.
+Unknown layouts, missing APIs, and normalization failures retain the generic
+timeline search. The coordinator filters clip metadata before requesting
+ranges: current-position lookup excludes earlier spine items; selection
+lookup also excludes items beyond its recognized end context. Non-overlay
+items remain real spine positions, so Start here in a gap advances to the next
+valid narrated chapter. Candidates retain timeline order, without assuming
+monotonic targets within a chapter. Existing lazy range caching serves both
+paths; no startup or polling precomputation is introduced. Metadata filtering
+is still linear in clip count, but expensive text resolution is chapter-local.
+
 Reader following is a transient session state owned by `main.lua`. New starts,
 explicit **Read from here**, **Stop**, EOF, errors, and document close reset it
 to **Following**; **Browsing** is never persisted. While Following, an active

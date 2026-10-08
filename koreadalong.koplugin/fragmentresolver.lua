@@ -119,6 +119,18 @@ local function option_max_steps(options)
     return options.max_steps
 end
 
+-- Normalize through CRe before interpreting its EPUB DOM fragment wrapper.
+-- Unknown DOM layouts (or older readers without normalization) are not hints.
+function FragmentResolver.getSpineIndex(document, pointer)
+    local ok, normalized = invoke(document, "getNormalizedXPointer", pointer)
+    if not ok or type(normalized) ~= "string" then
+        return nil
+    end
+    local fragment = normalized:match("^/body/DocFragment%[([1-9][0-9]*)%]/body/")
+        or normalized:match("^/body/DocFragment%[([1-9][0-9]*)%]/body$")
+    return fragment and tonumber(fragment) - 1 or nil
+end
+
 function FragmentResolver.resolve(document, clip, next_clip, options)
     local valid_clip, clip_error = validate_clip(clip)
     if not valid_clip then
