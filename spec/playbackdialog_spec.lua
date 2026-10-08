@@ -23,6 +23,7 @@ describe("playback dialog", function()
             return options
         end
         function button_dialog:init()
+            self.width = self.width or math.floor(require("device").screen:getWidth() * 0.9)
             self.movable = { dimen = { x = 10, y = 10, w = 500, h = 300 } }
             self.button_by_id = {}
             for _, row in ipairs(self.buttons) do
@@ -32,6 +33,7 @@ describe("playback dialog", function()
                             text = entry.text,
                             width = 100,
                             enabled_func = entry.enabled_func,
+                            callback = entry.callback,
                         }
                         function button:setText(text)
                             self.text = text
@@ -43,6 +45,10 @@ describe("playback dialog", function()
         end
         function button_dialog:getButtonById(id)
             return self.button_by_id[id]
+        end
+        function button_dialog:reinit()
+            assert.are.equal(self, self.status_group.parent)
+            self:init()
         end
         function button_dialog:onShow()
             self.base_show_count = (self.base_show_count or 0) + 1
@@ -67,6 +73,7 @@ describe("playback dialog", function()
         end
         local text_box_widget = simple_widget()
         function text_box_widget:new(options)
+            function options:free() end
             function options:setText(text)
                 self.text = text
             end
@@ -79,6 +86,9 @@ describe("playback dialog", function()
         local vertical_group = simple_widget()
         function vertical_group:new(options)
             options.dimen = { x = 20, y = 20, w = 400, h = 80 }
+            function options:resetLayout()
+                self.resets = (self.resets or 0) + 1
+            end
             return options
         end
 
@@ -136,6 +146,8 @@ describe("playback dialog", function()
                 state = self.state,
                 position = self.position,
                 duration = self.duration,
+                book_position = self.position,
+                book_duration = self.duration,
                 can_seek = self:isSeekEnabled(),
                 has_text_range = self.has_text_range,
             }
@@ -144,13 +156,13 @@ describe("playback dialog", function()
             return self.state == "playing" or self.state == "paused"
         end
         function coordinator:isActionEnabled()
-            return self.state ~= "loading" and self.state ~= "stopping"
+            return self.state ~= "loading" and self.state ~= "stopping" and self.state ~= "error"
         end
         function coordinator:canResume()
             return self.has_resume and self.state == "idle"
         end
         function coordinator:canChooseStart()
-            return self.state == "idle"
+            return self.state == "idle" or self.state == "ended"
         end
         function coordinator:isStopEnabled()
             return self.state == "playing" or self.state == "paused"
@@ -256,13 +268,15 @@ describe("playback dialog", function()
             scheduler = scheduler,
         }
         dialog:onShow()
-        assert.are.equal("Ready\n— / —", dialog.status_text.text)
+        assert.are.equal("Ready\nTrack time: — / —\nBook (overlays): — / —\nNarrated chapter: — / —", dialog.status_text.text)
         assert.are.equal(0, dialog.progress_bar.percentage)
-        assert.are.equal("Hide", dialog.buttons[2][2].text)
+        assert.are.equal("Hide", dialog:getButtonById("hide").text)
+        assert.is_nil(dialog:getButtonById("start_here"))
+        dialog:_toggle_more()
         assert.are.equal("Start here", dialog:getButtonById("start_here").text)
         assert.are.equal(0, scheduler.schedules)
 
-        dialog.buttons[1][2].callback()
+        dialog:getButtonById("toggle").callback()
         assert.are.equal(1, coordinator.toggle_count)
         assert.are.equal("Loading…", dialog:getButtonById("toggle").text)
         assert.are.equal(1, scheduler.schedules)
@@ -271,14 +285,14 @@ describe("playback dialog", function()
         coordinator.position = 30
         coordinator.duration = 120
         scheduler:fire(dialog.refresh_action)
-        assert.are.equal("Playing · following\n0:30 / 2:00", dialog.status_text.text)
+        assert.are.equal("Playing · following\nTrack time: 0:30 / 2:00\nBook (overlays): 0:30 / 2:00\nNarrated chapter: — / —", dialog.status_text.text)
         assert.are.equal(0.25, dialog.progress_bar.percentage)
         assert.are.equal("Pause", dialog:getButtonById("toggle").text)
         scheduler:fire(dialog.refresh_action)
         assert.are.equal("fast", ui_manager.dirty[#ui_manager.dirty].refresh_type)
 
-        dialog.buttons[1][1].callback()
-        dialog.buttons[1][3].callback()
+        dialog:getButtonById("seek_back").callback()
+        dialog:getButtonById("seek_forward").callback()
         assert.are.same({ -15, 15 }, coordinator.seeks)
     end)
 
@@ -294,7 +308,7 @@ describe("playback dialog", function()
         assert.is_true(dialog.refresh_scheduled)
         assert.are.equal("Pause", dialog:getButtonById("toggle").text)
 
-        dialog.buttons[1][2].callback()
+        dialog:getButtonById("toggle").callback()
         assert.are.equal("paused", coordinator.state)
         assert.are.equal(1, coordinator.toggle_count)
         assert.are.equal("Resume", dialog:getButtonById("toggle").text)
@@ -317,9 +331,9 @@ describe("playback dialog", function()
         }
         dialog:onShow()
         assert.is_true(dialog.refresh_scheduled)
-        assert.are.equal("Hide", dialog.buttons[2][2].text)
+        assert.are.equal("Hide", dialog:getButtonById("hide").text)
 
-        dialog.buttons[2][2].callback()
+        dialog:getButtonById("hide").callback()
         assert.are.equal("playing", coordinator.state)
         assert.are.equal(10, coordinator.position)
         assert.are.equal(20, coordinator.duration)
@@ -340,11 +354,13 @@ describe("playback dialog", function()
             scheduler = scheduler,
         }
         assert.are.equal(0, coordinator.toggle_count)
+        dialog:_toggle_more()
         assert.are.equal("Resume", dialog:getButtonById("resume").text)
         assert.are.equal("Start here", dialog:getButtonById("start_here").text)
         assert.are.equal("Start over", dialog:getButtonById("start_over").text)
+        assert.is_true(dialog:getButtonById("resume").enabled_func())
 
-        dialog.buttons[3][1].callback()
+        dialog:getButtonById("resume").callback()
         assert.are.equal(1, coordinator.resume_saved_count)
         assert.are.equal(0, coordinator.start_here_count)
         assert.are.equal(0, coordinator.start_over_count)
@@ -357,9 +373,11 @@ describe("playback dialog", function()
             scheduler = scheduler,
         }
 
-        assert.is_nil(dialog:getButtonById("resume"))
+        dialog:_toggle_more()
+        assert.is_false(dialog:getButtonById("resume").enabled_func())
         assert.are.equal("Start over", dialog:getButtonById("start_over").text)
-        dialog.buttons[3][2].callback()
+        assert.is_true(dialog:getButtonById("start_over").enabled_func())
+        dialog:getButtonById("start_over").callback()
         assert.are.equal(1, coordinator.start_over_count)
     end)
 
@@ -373,9 +391,9 @@ describe("playback dialog", function()
         }
         dialog:onShow()
         assert.is_nil(dialog.refresh_scheduled)
-        assert.are.equal("Hide", dialog.buttons[2][2].text)
+        assert.are.equal("Hide", dialog:getButtonById("hide").text)
 
-        dialog.buttons[2][2].callback()
+        dialog:getButtonById("hide").callback()
         assert.are.equal("paused", coordinator.state)
         assert.are.equal(10, coordinator.position)
         assert.are.equal(20, coordinator.duration)
@@ -400,7 +418,7 @@ describe("playback dialog", function()
             end,
         }
         dialog:onShow()
-        dialog.buttons[1][2].callback()
+        dialog:getButtonById("toggle").callback()
         assert.are.equal(0, reported)
     end)
 
@@ -411,18 +429,18 @@ describe("playback dialog", function()
             scheduler = scheduler,
             on_error = function() errors = errors + 1 end,
         }
-        assert.are.equal(60, dialog.status_text.height)
+        assert.are.equal(100, dialog.status_text.height)
         coordinator.has_text_range = false
         for _, state in ipairs({ "playing", "paused" }) do
             coordinator.state = state
             dialog:_refresh(true)
             assert.is_truthy(dialog.status_text.text:find("Text highlighting unavailable", 1, true))
-            assert.are.equal(60, dialog.status_text:getSize().h)
+            assert.are.equal(100, dialog.status_text:getSize().h)
         end
         coordinator.has_text_range = true
         dialog:_refresh(true)
         assert.is_nil(dialog.status_text.text:find("Text highlighting unavailable", 1, true))
-        assert.are.equal(60, dialog.status_text:getSize().h)
+        assert.are.equal(100, dialog.status_text:getSize().h)
         coordinator.state = "error"
         coordinator.has_text_range = false
         dialog:_refresh(true)
@@ -445,9 +463,9 @@ describe("playback dialog", function()
         for _, state in ipairs({ "playing", "paused" }) do
             coordinator.state = state
             assert.is_true(dialog:getButtonById("follow").enabled_func())
-            dialog.buttons[4][1].callback()
+            dialog:getButtonById("follow").callback()
             assert.are.equal("Follow: off", dialog:getButtonById("follow").text)
-            dialog.buttons[4][1].callback()
+            dialog:getButtonById("follow").callback()
             assert.are.equal("Follow: on", dialog:getButtonById("follow").text)
             assert.are.equal(state, coordinator.state)
         end
@@ -471,22 +489,22 @@ describe("playback dialog", function()
             end,
         }
         dialog:onShow()
-        assert.are.equal("Playing · following\n0:30 / 2:00", dialog.status_text.text)
+        assert.are.equal("Playing · following\nTrack time: 0:30 / 2:00\nBook (overlays): 0:30 / 2:00\nNarrated chapter: — / —", dialog.status_text.text)
 
         follow_state = "browsing"
         dialog:onFollowStateChanged()
-        assert.are.equal("Playing · browsing\n0:30 / 2:00", dialog.status_text.text)
+        assert.are.equal("Playing · browsing\nTrack time: 0:30 / 2:00\nBook (overlays): 0:30 / 2:00\nNarrated chapter: — / —", dialog.status_text.text)
         assert.are.equal("ui", ui_manager.dirty[#ui_manager.dirty].refresh_type)
         assert.are.equal(dialog.movable.dimen, ui_manager.dirty[#ui_manager.dirty].dimen)
 
         coordinator.state = "paused"
         follow_state = "following"
         dialog:onFollowStateChanged()
-        assert.are.equal("Paused · following\n0:30 / 2:00", dialog.status_text.text)
+        assert.are.equal("Paused · following\nTrack time: 0:30 / 2:00\nBook (overlays): 0:30 / 2:00\nNarrated chapter: — / —", dialog.status_text.text)
 
         follow_state = "browsing"
         dialog:onFollowStateChanged()
-        assert.are.equal("Paused · browsing\n0:30 / 2:00", dialog.status_text.text)
+        assert.are.equal("Paused · browsing\nTrack time: 0:30 / 2:00\nBook (overlays): 0:30 / 2:00\nNarrated chapter: — / —", dialog.status_text.text)
     end)
 
     it("exposes a return action and refreshes its enabled state", function()
@@ -504,7 +522,9 @@ describe("playback dialog", function()
                 return true
             end,
         }
-        local return_button = dialog.buttons[4][2]
+        dialog:_toggle_more()
+        ui_manager.dirty = {}
+        local return_button = dialog:getButtonById("return_to_narration")
         assert.are.equal("Return to narration", return_button.text)
         assert.is_false(return_button.enabled_func())
 
@@ -513,6 +533,89 @@ describe("playback dialog", function()
         return_button.callback()
         assert.are.equal(1, returned)
         assert.are.equal(1, #ui_manager.dirty)
+    end)
+
+    it("keeps transport/start enabled states accurate across every panel state", function()
+        coordinator.has_resume = true
+        local stopped = 0
+        local dialog = PlaybackDialog:new{
+            coordinator = coordinator, scheduler = scheduler,
+            on_follow = function() return true end,
+            on_stop = function() stopped = stopped + 1 end,
+        }
+        dialog:_toggle_more()
+        for _, state in ipairs{ "idle", "loading", "playing", "paused", "stopping", "ended", "error" } do
+            coordinator.state = state
+            dialog:_refresh(true)
+            local active = state == "playing" or state == "paused"
+            assert.are.equal(active, dialog:getButtonById("seek_back").enabled_func())
+            assert.are.equal(active, dialog:getButtonById("seek_forward").enabled_func())
+            assert.are.equal(active, dialog:getButtonById("stop").enabled_func())
+            assert.are.equal(active, dialog:getButtonById("follow").enabled_func())
+            assert.are.equal(state == "idle", dialog:getButtonById("resume").enabled_func())
+            assert.are.equal(state == "idle" or state == "ended",
+                dialog:getButtonById("start_over").enabled_func())
+        end
+        coordinator.state = "playing"
+        dialog:onShow()
+        dialog:getButtonById("stop").callback()
+        assert.are.equal(1, stopped)
+        assert.are.equal(1, coordinator.stop_count)
+        assert.are.equal("stopping", coordinator.state)
+        coordinator.state = "idle"
+        scheduler:fire(dialog.refresh_action)
+        assert.is_false(dialog.refresh_scheduled)
+        assert.is_true(dialog:getButtonById("resume").enabled_func())
+    end)
+
+    it("labels independent track and book clocks and grows measured layout safely", function()
+        function coordinator:getPlaybackStatus()
+            return { state = "paused", position = 10, duration = 100,
+                book_position = 23, book_duration = 25,
+                chapter = 2, chapter_count = 4, has_text_range = false }
+        end
+        local screen = require("device").screen
+        screen.getWidth = function() return 400 end
+        screen.getHeight = function() return 700 end
+        local dialog = PlaybackDialog:new{ coordinator = coordinator, scheduler = scheduler }
+        assert.are.same({ x = 20, y = 692, w = 360, h = 0 }, dialog.anchor())
+        dialog.status_text.height = 40 -- Force the growth path, not just the initial reserve.
+        local refresh = dialog.refresh_action
+        dialog:onShow()
+        assert.are.equal(100, dialog.status_text:getSize().h)
+        assert.are.equal(1, dialog.status_group.resets)
+        assert.are.equal(refresh, dialog.refresh_action)
+        assert.are.equal(23 / 25, dialog.progress_bar.percentage)
+        assert.is_truthy(dialog.status_text.text:find("Track time: 0:10 / 1:40", 1, true))
+        assert.is_truthy(dialog.status_text.text:find("Book (overlays): 0:23 / 0:25", 1, true))
+        assert.is_truthy(dialog.status_text.text:find("Narrated chapter: 2 / 4", 1, true))
+    end)
+
+    it("preserves refresh ownership and measured layout through More/Less and Hide", function()
+        coordinator.state = "playing"
+        local dialog = PlaybackDialog:new{ coordinator = coordinator, scheduler = scheduler }
+        dialog:onShow()
+        local refresh = dialog.refresh_action
+        local height = dialog.status_text.height
+        assert.are.equal(2, #dialog.buttons)
+        for _ = 1, 3 do
+            dialog:getButtonById("more").callback()
+            assert.are.equal(4, #dialog.buttons)
+            assert.are.equal("Less", dialog:getButtonById("more").text)
+            assert.is_true(dialog:getButtonById("stop").enabled_func())
+            assert.is_false(dialog:getButtonById("resume").enabled_func())
+            dialog:getButtonById("more").callback()
+            assert.are.equal(2, #dialog.buttons)
+            assert.is_nil(dialog:getButtonById("stop"))
+            assert.are.equal("all", ui_manager.dirty[#ui_manager.dirty].widget)
+        end
+        assert.are.equal(height, dialog.status_text:getSize().h)
+        assert.are.equal(refresh, dialog.refresh_action)
+        assert.are.equal(1, scheduler.schedules)
+        dialog:getButtonById("hide").callback()
+        assert.is_nil(scheduler.tasks[refresh])
+        refresh() -- A callback already dequeued before Hide must be inert.
+        assert.are.equal(1, scheduler.schedules)
     end)
 
     it("calls start hooks for new starts but preserves browsing on resume", function()
@@ -527,7 +630,8 @@ describe("playback dialog", function()
                 started = started + 1
             end,
         }
-        dialog.buttons[3][1].callback()
+        dialog:_toggle_more()
+        dialog:getButtonById("start_here").callback()
         assert.are.equal(1, started)
 
         coordinator.state = "paused"
@@ -541,7 +645,7 @@ describe("playback dialog", function()
                 started = started + 1
             end,
         }
-        dialog.buttons[1][2].callback()
+        dialog:getButtonById("toggle").callback()
         assert.are.equal(1, started)
         assert.are.equal("playing", coordinator.state)
     end)

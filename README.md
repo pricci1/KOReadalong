@@ -118,8 +118,12 @@ sanitizes media paths and is suitable for attaching to a bug report. Use
 ## Use
 
 Open an EPUB containing EPUB 3 Media Overlays. Supported books gain a
-**Read along** panel with playback progress, 15-second seek buttons, and
-**Start here**, **Pause/Resume**, **Stop**, and **Hide** controls. Opening a book
+compact, bottom-anchored **Read along** panel with 15-second seek buttons,
+**Pause/Resume** (or **Start here** when idle), **Follow**, and **Hide**.
+**More** reveals **Stop**, saved **Resume**, **Start here**, **Start over**, and
+**Return to narration**; **Less** collapses those extra actions. Unavailable
+actions remain disabled. **Hide** leaves narration running; the assigned
+gesture reopens the compact panel. Opening a book
 or the panel never starts audio automatically. **Start here** finds the first
 valid narrated segment at or after the reader's current logical position;
 **Stop** stops narration and resets the session to the first clip.
@@ -132,6 +136,18 @@ XPointers, never as screen coordinates or a reader annotation. If the EPUB,
 target clip, or saved XPointer no longer matches, KoReadalong discards the
 stale state and **Resume** falls back to the current-position start path.
 After narration reaches the end, **Start over** remains available for replay.
+
+**Track time** is the current audio resource's position/duration, not the whole
+book. The seek buttons still seek by 15 seconds within that resource.
+**Book (overlays)** and its progress bar use SMIL-derived audio spans: each
+distinct resource is counted once in first-appearance order, from its earliest
+clip begin to its latest clip end, including internal gaps. Unreferenced audio
+before/after these spans is excluded, so this is not a claim about the duration
+of every full audio file. No eager extraction or duration probing is needed.
+**Narrated chapter** is the current overlay-bearing spine item's ordinal/count,
+not a TOC title or the count of all chapters. Gaps have no current narrated
+chapter. Unknown elapsed times show **—**, including idle/loading and after
+completed audio has been released; **Finished** still identifies EOF.
 
 While narration is playing or paused, a deliberate page turn or reader jump
 through the table of contents, search results, or a link suspends automatic
@@ -209,5 +225,14 @@ pinned-KOReader pipeline: package and SMIL parsing, private audio extraction,
 real mpv IPC, timeline lookup, CRe fragment resolution, the playback panel,
 ephemeral underline, browse-away without snap-back, Return to narration,
 following across a resource transition, EOF handling, and cleanup.
+
+For native panel captures, create a scratch output directory and set
+`KOREADALONG_SMOKE_SCREENSHOT_DIR` to its absolute path when running
+`make smoke-integration`. The optional capture sequence exercises More/Less,
+Pause/Resume, Follow off, resource transition, and Finished; its missing-text
+frame temporarily removes the synthetic book's resolved range while paused.
+The run uses an isolated HOME and mpv's test-only null sink. To repeat at a
+narrower size, also set `EMULATE_READER_VIEWPORT='{x=0,y=0,w=400,h=700}'`.
+Only synthetic fixture text/audio is generated, never private book content.
 
 See [docs/architecture.md](docs/architecture.md) for the MVP boundaries and compatibility findings.

@@ -186,6 +186,54 @@ discard the active XPointer; `mpvaudio.lua`, `kindleaudio.lua`, and
 
 Dynamic read-along marks should be a registered reader view module with a `paintTo` method. Persisted highlights are intentionally avoided because narration state must not enter KOReader's annotations/bookmarks/export systems. Text anchors are stored as XPointers; rendered boxes are display-dependent cache entries only. Confirmed narration state is stored separately in the book's `DocSettings` sidecar and is cleared when the user chooses **Stop**, **Start over**, or reaches EOF.
 
+### Compact controls and overlay progress
+
+`playbackdialog.lua` retains sole ownership of the native `ButtonDialog`.
+Its `MovableContainer` anchor is a point near the current screen's bottom,
+with a scaled inset to keep the entire border visible, centered using the
+dialog's computed width. This uses the shipped anchor API
+instead of wrapping the existing center container in `BottomContainer` or
+introducing a second panel framework. It remains a movable/dismissable native
+dialog (not a dock that changes the reader viewport). Two standard button rows
+hold seek/transport and Follow/Hide/More. More/Less uses ButtonDialog's reinit
+with the same added status widgets and refresh callback; extra rows expose
+Stop/Return and start choices. The status group's `parent` marker opts into
+ButtonDialog's added-widget preservation during reinit (without it native
+TextBox buffers are freed). Disabled choices stay present so saved Resume
+and Start over become available as the session state changes. Hide/close
+unschedules refresh; an already-dequeued callback checks ownership before
+doing anything. Collapse dirties all window layers to repaint the entire old
+footprint, not just refresh pixels over the old panel without redrawing text.
+
+Status text reserves measured height including the optional missing-text hint.
+Translated labels and long time samples are measured at the actual width;
+if a later string exceeds the reserve, an unbounded TextBoxWidget measurement
+grows the reserve and rebuilds parent layouts after updating the text. Neither
+polling nor More/Less relies on stale VerticalGroup offsets.
+
+`Timeline:getBookProgress` derives metadata once from ordered clips. For each
+distinct archive audio path it stores the minimum/first begin and maximum end,
+and accumulates these extents once in first-resource-appearance order. The
+span includes interior gaps but excludes unreferenced leading/trailing audio;
+repeated text targets and multiple XHTML chapters do not duplicate resources.
+Elapsed overlay time is the preceding resource spans plus the current observed
+track time minus that resource's first begin, clamped to the span. This is an
+overlay-derived traversal metric, not actual whole-file runtime; publications
+that reuse/interleave a resource follow this same distinct-resource convention.
+There is no audio extraction/probe, clip retiming, global offset, or change to
+track fields/seek semantics. Unknown resources or clocks yield unknown elapsed
+time, never guessed progress. Idle, loading, stopping and error expose no book
+elapsed time; after EOF releases the resource, Finished likewise shows unknown
+elapsed time rather than inventing an observation of the final clock.
+
+The coordinator exposes book elapsed/duration and narrated-spine ordinal/count
+alongside unchanged track fields. Chapter lookup uses the timeline's active
+half-open clip, so gaps/exact final boundaries have no chapter. Only distinct
+spine items with overlay clips count. KOReader's `ReaderToc:getTocTitleByPage`
+exists at the reader boundary, but this panel intentionally uses the truthful
+metadata ordinal rather than a title derived from the user's browsing position.
+No document or TOC access is added to audio adapters.
+
 ## Audio adapters
 
 The desktop adapter is `mpvaudio.lua`. It owns one `mpv` process per adapter

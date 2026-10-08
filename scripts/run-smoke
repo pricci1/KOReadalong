@@ -120,6 +120,7 @@ local MpvAudio = require("mpvaudio")
 local MpvProcess = require("mpvprocess")
 local Event = require("ui/event")
 local UIManager = require("ui/uimanager")
+local InfoMessage = require("ui/widget/infomessage")
 local Screen = require("device").screen
 local logger = require("logger")
 
@@ -294,6 +295,11 @@ function Smoke:onReaderReady()
             return follow_state == "browsing"
                 and latest_range ~= nil
         end,
+        on_follow = function()
+            follow_state = follow_state == "following" and "browsing" or "following"
+            refresh_follow_state()
+            return true
+        end,
         on_return = function()
             if not latest_range then
                 return nil, "no active smoke narration range"
@@ -314,6 +320,14 @@ function Smoke:onReaderReady()
     }
     UIManager:scheduleIn(0.2, function()
         if playback_dialog and not quit_scheduled then
+            -- Fresh isolated profiles show first-run notices. Dismiss only
+            -- those native info widgets in this owned diagnostic process.
+            for i = #UIManager._window_stack, 1, -1 do
+                local widget = UIManager._window_stack[i].widget
+                if getmetatable(widget) == InfoMessage then
+                    UIManager:close(widget)
+                end
+            end
             UIManager:show(playback_dialog)
         end
     end)
@@ -388,6 +402,15 @@ function Smoke:onReaderReady()
                 return
             end
             logger.info("SMOKE_EOF state=ended audio_removed=true")
+            if screenshot_dir then
+                playback_dialog:_refresh(true)
+                if not playback_dialog.expanded then
+                    playback_dialog:getButtonById("more").callback()
+                end
+                UIManager:scheduleIn(0.1, function()
+                    take_screenshot("expanded-finished")
+                end)
+            end
             UIManager:scheduleIn(0.7, function()
                 local audio_dir = materializer.session_dir
                 if playback_dialog then
@@ -438,8 +461,35 @@ function Smoke:onReaderReady()
             browse_scheduled = true
             UIManager:scheduleIn(0.2, function()
                 take_screenshot("following")
+                if screenshot_dir then
+                    playback_dialog:getButtonById("more").callback()
+                    UIManager:scheduleIn(0.1, function()
+                        take_screenshot("expanded-playing")
+                        playback_dialog:getButtonById("toggle").callback()
+                        UIManager:scheduleIn(0.3, function()
+                            assert(coordinator:getState() == "paused")
+                            playback_dialog:_refresh(true)
+                            take_screenshot("expanded-paused")
+                            playback_dialog:getButtonById("more").callback()
+                            playback_dialog:getButtonById("follow").callback()
+                            UIManager:scheduleIn(0.1, function()
+                                take_screenshot("compact-paused-follow-off")
+                                -- Simulate unavailable text only in this synthetic capture.
+                                local range = coordinator.current_range
+                                coordinator.current_range = nil
+                                playback_dialog:_refresh(true)
+                                UIManager:scheduleIn(0.1, function()
+                                    take_screenshot("compact-missing-text")
+                                    coordinator.current_range = range
+                                    playback_dialog:getButtonById("follow").callback()
+                                    playback_dialog:getButtonById("toggle").callback()
+                                end)
+                            end)
+                        end)
+                    end)
+                end
             end)
-            UIManager:scheduleIn(0.45, browse_away)
+            UIManager:scheduleIn(screenshot_dir and 1.3 or 0.45, browse_away)
         end
         if coordinator.current_clip_index == 4
             and coordinator.range_cache[4]
@@ -468,6 +518,12 @@ function Smoke:onReaderReady()
                 .. " position=" .. tostring(status.position)
                 .. " range_cache=true audio=book/second.wav")
             logger.info("SMOKE_NAVIGATION chapter=2 range_visible=true")
+            if screenshot_dir then
+                playback_dialog:_refresh(true)
+                UIManager:scheduleIn(0.1, function()
+                    take_screenshot("resource-transition")
+                end)
+            end
             UIManager:scheduleIn(0.2, check_eof)
             return
         end

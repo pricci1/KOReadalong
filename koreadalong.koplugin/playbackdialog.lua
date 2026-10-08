@@ -93,16 +93,28 @@ function PlaybackDialog:onReturnAvailabilityChanged()
 end
 
 function PlaybackDialog:init()
+    if self.status_group then
+        ButtonDialog.init(self)
+        return
+    end
     self.scheduler = self.scheduler or UIManager
     self.title = _("Read along")
     self.title_align = "center"
     self.use_info_style = false
+    self.anchor = function()
+        return { x = math.floor((Device.screen:getWidth() - self.width) / 2),
+            y = Device.screen:getHeight() - Device.screen:scaleBySize(8),
+            w = self.width, h = 0 }
+    end
 
     local status_width = math.floor(
         math.min(Device.screen:getWidth(), Device.screen:getHeight()) * 0.72
     )
     self.status_text = TextBoxWidget:new{
-        text = state_label("paused", "browsing") .. "\n— / —\n"
+        text = state_label("paused", "browsing")
+            .. "\n" .. string.format(_("Track time: %s / %s"), "00:00:00", "00:00:00")
+            .. "\n" .. string.format(_("Book (overlays): %s / %s"), "00:00:00", "00:00:00")
+            .. "\n" .. string.format(_("Narrated chapter: %s / %s"), "9999", "9999") .. "\n"
             .. _("Text highlighting unavailable"),
         width = status_width,
         alignment = "center",
@@ -117,6 +129,8 @@ function PlaybackDialog:init()
         percentage = 0,
     }
     self.status_group = VerticalGroup:new{
+        -- ButtonDialog:reinit preserves added widgets identified by parent.
+        parent = self,
         not_focusable = true,
         self.status_text,
         VerticalSpan:new{ width = Device.screen:scaleBySize(8) },
@@ -124,10 +138,6 @@ function PlaybackDialog:init()
     }
     self._added_widgets = { self.status_group }
 
-    local has_resume = type(self.coordinator.canResume) == "function"
-        and self.coordinator:canResume()
-    local has_start_over = has_resume
-        or self.coordinator:getState() == "ended"
     local start_choices = {
         {
             id = "start_here",
@@ -147,7 +157,7 @@ function PlaybackDialog:init()
             end,
         },
     }
-    if has_resume then
+    if type(self.coordinator.canResume) == "function" then
         table.insert(start_choices, 1, {
             id = "resume",
             text = _("Resume"),
@@ -165,7 +175,7 @@ function PlaybackDialog:init()
             end,
         })
     end
-    if has_start_over then
+    if type(self.coordinator.startOver) == "function" then
         start_choices[#start_choices + 1] = {
             id = "start_over",
             text = _("Start over"),
@@ -188,6 +198,7 @@ function PlaybackDialog:init()
     self.buttons = {
         {
             {
+                id = "seek_back",
                 text = _("−15 s"),
                 enabled_func = function()
                     return self.coordinator:isSeekEnabled()
@@ -218,6 +229,7 @@ function PlaybackDialog:init()
                 end,
             },
             {
+                id = "seek_forward",
                 text = _("+15 s"),
                 enabled_func = function()
                     return self.coordinator:isSeekEnabled()
@@ -231,6 +243,7 @@ function PlaybackDialog:init()
         },
         {
             {
+                id = "stop",
                 text = _("Stop"),
                 enabled_func = function()
                     return self.coordinator:isStopEnabled()
@@ -246,6 +259,7 @@ function PlaybackDialog:init()
                 end,
             },
             {
+                id = "hide",
                 text = _("Hide"),
                 callback = function()
                     UIManager:close(self)
@@ -286,6 +300,14 @@ function PlaybackDialog:init()
         },
     }
 
+    local rows = self.buttons
+    self.compact_buttons = { rows[1], { rows[4][1], rows[2][2], {
+        id = "more", text = _("More"), callback = function() self:_toggle_more() end,
+    } } }
+    self.expanded_buttons = { rows[1], self.compact_buttons[2],
+        { rows[2][1], rows[4][2] }, rows[3] }
+    self.buttons = self.compact_buttons
+
     self.refresh_action = function()
         self.refresh_scheduled = false
         if not self.is_open then
@@ -296,6 +318,17 @@ function PlaybackDialog:init()
     end
 
     ButtonDialog.init(self)
+end
+
+function PlaybackDialog:_toggle_more()
+    self.expanded = not self.expanded
+    self.compact_buttons[2][3].text = self.expanded and _("Less") or _("More")
+    self.buttons = self.expanded and self.expanded_buttons or self.compact_buttons
+    self.layout = nil
+    self:reinit()
+    self:_refresh(true)
+    -- A collapsed panel must also erase the old, taller footprint.
+    UIManager:setDirty("all", "ui")
 end
 
 function PlaybackDialog:_run(action, on_success)
@@ -330,18 +363,44 @@ function PlaybackDialog:_refresh(full_refresh)
     local position = status.position
     local duration = status.duration
     local status_text = string.format(
-        "%s\n%s / %s",
+        "%s\n" .. _("Track time: %s / %s")
+            .. "\n" .. _("Book (overlays): %s / %s")
+            .. "\n" .. _("Narrated chapter: %s / %s"),
         state_label(status.state, self:_get_follow_state()),
         format_time(position),
-        format_time(duration)
+        format_time(duration),
+        format_time(status.book_position), format_time(status.book_duration),
+        status.chapter or "—", status.chapter_count or "—"
     )
     if (status.state == "playing" or status.state == "paused")
         and status.has_text_range == false then
         status_text = status_text .. "\n" .. _("Text highlighting unavailable")
     end
+    local layout_changed = false
+    if self.status_text.text ~= status_text then
+        -- Very long durations/localized labels can exceed the initial reserve.
+        -- Measure unbounded text before updating the cached parent layout.
+        local measured = TextBoxWidget:new{
+            text = status_text, width = self.status_text.width,
+            alignment = "center", face = self.status_text.face,
+        }
+        local height = measured:getSize().h
+        measured:free()
+        if height > self.status_text.height then
+            self.status_text.height = height
+            layout_changed = true
+        end
+    end
     self.status_text:setText(status_text)
+    if layout_changed then
+        self.status_group:resetLayout()
+        self.layout = nil
+        self:reinit()
+        UIManager:setDirty("all", "ui")
+    end
 
     local percentage = 0
+    position, duration = status.book_position, status.book_duration
     if type(position) == "number" and type(duration) == "number"
         and duration > 0 then
         percentage = math.max(0, math.min(1, position / duration))
