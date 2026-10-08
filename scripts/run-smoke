@@ -493,14 +493,11 @@ function Smoke:onReaderReady()
         end
         if coordinator.current_clip_index == 4
             and coordinator.range_cache[4]
-            and status.state == "playing" then
+            and status.state == "playing"
+            and type(status.position) == "number" and status.position > 0 then
             assert(coordinator.range_cache[1] and coordinator.range_cache[2]
                 and coordinator.range_cache[3], "formatted/repeated clips were not played")
             logger.info("SMOKE_COMPAT_PLAYBACK clips=4 ranges=true")
-            if type(status.position) ~= "number" or status.position <= 0 then
-                fail("expected second-chapter playback position")
-                return
-            end
             if not overlay.pos0
                 or not self.document:isXPointerInCurrentPage(overlay.pos0) then
                 fail("expected visible second-chapter underline")
