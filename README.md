@@ -97,17 +97,21 @@ the next narrated item at 5, reached EOF, and released its temporary audio.
 The integrated Bluetooth prompt/settings and closed-handle recovery were also
 verified. The user subsequently confirmed audible headphone playback with
 approximately one second of delay, but reported repeated native KOReader
-crashes with audio continuing. Crashes were reproduced while opening a book
-and restarting narration, including with Audiobook disabled; disabling that
-plugin alone is not an established fix. Native stability remains a first-release
-blocker under investigation. Orphan recovery passed automated regressions and
-a real-KinAMP backend test on the Kindle: a client exited without close, a new
-client recovered its exact paused track in the same daemon, cleaned old files,
-refused a live-owner attempt without writes, and verified pause/resume/seek/stop.
-That test used silent audio and test-only unknown Bluetooth reporting; it is
-not native-reader or audible validation. Connected native playback and crash
-recovery remain acceptance gates. The installed full player identifies 3.0.0;
-the minimal daemon's exact version remains unverified.
+crashes with audio continuing. A kernel core from a never-debugger-attached
+reader, with Audiobook disabled, identified a KoReadalong heap overwrite:
+string-initialized variable-length FFI buffers omitted the terminating NUL's
+space. The FIFO and playlist allocations are fixed without sending that NUL.
+The short-command/garbage-collection regression crashed with the old port on
+the Kindle and passed with the fix. Connected native playback and close/reopen
+with this final fix still require acceptance; the candidate is not yet declared
+release-ready.
+
+Orphan recovery passed automated regressions, a real-KinAMP backend test, and
+native Start in a reopened reader: it stopped the exact recorded orphan in the
+same daemon generation, cleaned its old audio/M3U and started a new session.
+The backend test also refused a live-owner attempt without writes and verified
+pause/resume/seek/stop. The installed full player identifies 3.0.0; the minimal
+daemon's exact version remains unverified.
 
 ### Troubleshooting
 
@@ -129,8 +133,8 @@ sanitizes media paths and is suitable for attaching to a bug report. Use
 KOReader's optional HTTP inspector is unauthenticated and can invoke arbitrary
 methods. Use it only on a trusted LAN for testing, never expose it publicly,
 and stop it and disable autostart afterward. Prefer native book opening during
-device tests. This session also reproduced crashes through native controls;
-the inspector is not the only affected route and the cause is not established.
+device tests. The heap-overwrite crash was reproduced through native controls
+with the inspector stopped; disabling the inspector alone does not fix it.
 
 | Symptom | Check | Remedy |
 | --- | --- | --- |
