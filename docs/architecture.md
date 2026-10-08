@@ -298,7 +298,9 @@ and requires a newly published idle snapshot; stop and close require a fresh
 stopped publication for the exact audio path. Publication identity is carried
 by a KinAMPPort token derived from the atomically replaced status file's inode
 and modification metadata, not by a poll counter. A missing or busy daemon is
-reported as a playback error; the adapter does not launch, kill, or quit it.
+handled before playback acquisition: the native startup boundary arranges an
+absent service, while a busy daemon is left alone. The adapter never kills or
+quits a daemon.
 
 KinAMP's whole-second seek protocol is intentionally exposed as degraded
 timing: fractional requests are rounded to the nearest non-negative second,
@@ -339,6 +341,12 @@ fresh stopped status before creating a playlist or sending playback commands.
 Missing installation, startup failure, and busy playback are recoverable before
 resource acquisition. There is no atomic cross-client claim in KinAMP's protocol;
 concurrent external launchers are not supported.
+
+The same native boundary reads the official `kinamp_bt` connection API before
+startup/acquisition. A confirmed empty connected-device list without a connected
+name produces a recoverable Bluetooth setup prompt. Unavailable or inconclusive
+reporting is not treated as disconnection. Busy-client refusal takes priority;
+the platform-neutral coordinator knows nothing about Bluetooth.
 
 Stop and document close still release only owned audio and temporary resources.
 Neither the starter nor the port quits/kills a daemon or pairs Bluetooth devices.

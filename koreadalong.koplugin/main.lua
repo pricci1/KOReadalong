@@ -503,15 +503,21 @@ function KoReadalong:_show_error(error_message)
             })
             return
         end
+        if message == "Bluetooth audio is not connected" then
+            self:_show_kinamp_help(_([[No Bluetooth audio device is connected.
+
+Open Bluetooth setup to connect your audio device, then press Start again. Pair new devices in Kindle settings.]]))
+            return
+        end
     end
     UIManager:show(InfoMessage:new{
         text = _("Read along: ") .. message,
     })
 end
 
-function KoReadalong:_show_kinamp_help()
+function KoReadalong:_show_kinamp_help(message)
     UIManager:show(require("ui/widget/confirmbox"):new{
-        text = KINAMP_HELP,
+        text = message or KINAMP_HELP,
         ok_text = _("Bluetooth setup"),
         ok_callback = function()
             local ok, settings = pcall(require, "kinamp_btdevices")

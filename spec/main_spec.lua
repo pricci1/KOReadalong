@@ -550,6 +550,21 @@ describe("KoReadalong lifecycle and menu", function()
         assert.matches("press Start again", ui_manager.shown[3].text)
     end)
 
+    it("routes confirmed disconnected audio to the integrated Bluetooth settings", function()
+        is_kindle = true
+        plugin:onReaderReady()
+        plugin.coordinator.options.on_error("Bluetooth audio is not connected")
+        assert.are.equal(1, #ui_manager.shown)
+        local prompt = ui_manager.shown[1]
+        assert.matches("No Bluetooth audio device is connected", prompt.text)
+        assert.matches("press Start again", prompt.text)
+        assert.are.equal("Bluetooth setup", prompt.ok_text)
+        local opened = 0
+        package.loaded.kinamp_btdevices = { open = function() opened = opened + 1 end }
+        prompt.ok_callback()
+        assert.are.equal(1, opened)
+    end)
+
     it("shows the selection action only for usable XPointers and routes its callback", function()
         plugin:onReaderReady()
         plugin:_set_browsing()

@@ -65,10 +65,32 @@ function KinAMPService.new(options)
             local ok, config = pcall(require, "kinamp_config")
             return ok and config or nil
         end,
+        get_bluetooth = options.get_bluetooth or function()
+            local ok, bluetooth = pcall(require, "kinamp_bt")
+            return ok and bluetooth or nil
+        end,
         exists = options.exists or exists,
         running = options.running or running,
         launch = options.launch or launch,
     }, KinAMPService)
+end
+
+function KinAMPService:checkOutput()
+    -- Read only the official Bluetooth API. Unknown/unsupported reporting is
+    -- not proof of a missing connection; never change the radio or pair here.
+    local ok, connected, name = pcall(function()
+        local bluetooth = self.get_bluetooth()
+        if bluetooth and type(bluetooth.available) == "function"
+            and type(bluetooth.getConnected) == "function"
+            and type(bluetooth.getConnectedName) == "function"
+            and bluetooth.available() then
+            return bluetooth.getConnected(), bluetooth.getConnectedName()
+        end
+    end)
+    if ok and type(connected) == "table" and #connected == 0 and not name then
+        return nil, "Bluetooth audio is not connected"
+    end
+    return true
 end
 
 function KinAMPService:start(runtime)

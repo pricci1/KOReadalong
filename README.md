@@ -59,6 +59,10 @@ KinAMP still owns its installation, Bluetooth, saved playlists, and player
 settings. KoReadalong does not pair devices or change the radio automatically.
 Its **KinAMP setup and help** menu provides the integrated Bluetooth route and the
 [official KinAMP documentation](https://github.com/kbarni/KinAMP/blob/master/README.md).
+When the official Bluetooth API confirms that no audio device is connected,
+Start offers **Bluetooth setup** before acquiring playback. Connect your device,
+close those settings, and press Start again. Unknown or unsupported connection
+reporting does not block playback and cannot confirm audible output.
 
 KinAMP's command FIFO and status file are
 `${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_cmd` and

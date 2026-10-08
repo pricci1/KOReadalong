@@ -315,6 +315,48 @@ describe("KinAMP Kindle audio adapter", function()
         assert.is_nil(port.start)
     end)
 
+    it("offers recoverable output setup before starting or acquiring idle playback", function()
+        for _, live in ipairs{ false, true } do
+            local connected, launches = false, 0
+            local starter = {
+                checkOutput = function()
+                    if connected then return true end
+                    return nil, "Bluetooth audio is not connected"
+                end,
+                start = function() launches = launches + 1; return true end,
+            }
+            local audio, _, port, writer = make_audio{ live = live, starter = starter }
+            local opened, message = audio:open(AUDIO_PATH)
+            assert.is_nil(opened)
+            assert.are.equal("Bluetooth audio is not connected", message)
+            assert.is_true(audio:getStatus().recoverable)
+            assert.are.equal(0, launches)
+            assert.are.equal(0, #writer.created)
+            assert.are.equal(0, #port.commands)
+            assert.is_true(audio:stop())
+            connected = true
+            assert.is_true(audio:open(AUDIO_PATH))
+            assert.are.equal(live and 0 or 1, launches)
+        end
+    end)
+
+    it("prioritizes preserving busy playback over Bluetooth setup", function()
+        local checks = 0
+        local audio, _, port, writer = make_audio{
+            status = daemon_status("paused", 14, 90, "/other/client.mp3"),
+            starter = { checkOutput = function()
+                checks = checks + 1
+                return nil, "Bluetooth audio is not connected"
+            end },
+        }
+        local opened, message = audio:open(AUDIO_PATH)
+        assert.is_nil(opened)
+        assert.are.equal("KinAMP is busy", message)
+        assert.are.equal(0, checks)
+        assert.are.equal(0, #writer.created)
+        assert.are.equal(0, #port.commands)
+    end)
+
     it("starts asynchronously once and requires fresh idle readiness before playback", function()
         local launches = 0
         local starter = { start = function(_, runtime)

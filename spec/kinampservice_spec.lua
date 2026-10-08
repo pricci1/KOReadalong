@@ -25,6 +25,42 @@ local function service(files)
 end
 
 describe("KinAMP idle startup service", function()
+    it("requires Bluetooth only when the official API confirms no connected device", function()
+        local connected, name = {}, nil
+        local instance = KinAMPService.new{
+            get_bluetooth = function()
+                return {
+                    available = function() return true end,
+                    getConnected = function() return connected end,
+                    getConnectedName = function() return name end,
+                }
+            end,
+        }
+        local ready, message = instance:checkOutput()
+        assert.is_nil(ready)
+        assert.are.equal("Bluetooth audio is not connected", message)
+        connected = { { name = "Headphones" } }
+        assert.is_true(instance:checkOutput())
+        connected, name = {}, "Headphones"
+        assert.is_true(instance:checkOutput())
+        connected, name = nil, nil
+        assert.is_true(instance:checkOutput())
+    end)
+
+    it("does not mistake unavailable Bluetooth reporting for a confirmed disconnection", function()
+        for _, bluetooth in ipairs{
+            false,
+            {},
+            { available = function() return false end },
+            { available = function() error("unsupported firmware") end,
+                getConnected = function() return {} end,
+                getConnectedName = function() return nil end },
+        } do
+            local instance = KinAMPService.new{ get_bluetooth = function() return bluetooth end }
+            assert.is_true(instance:checkOutput())
+        end
+    end)
+
     it("executes only idle startup with the installation working directory and quoted paths", function()
         local root = os.tmpname()
         os.remove(root)

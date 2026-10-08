@@ -941,6 +941,17 @@ function KindleAudio:open(path, options)
     if not probe then
         return self:_error(probe_error)
     end
+    if probe.status
+        and (probe.status.state == "playing"
+            or probe.status.state == "paused") then
+        return self:_error("KinAMP is busy")
+    end
+    if self.starter and type(self.starter.checkOutput) == "function" then
+        local ready, output_error = invoke(self.starter, "checkOutput")
+        if not ready then
+            return self:_error(output_error)
+        end
+    end
     if not probe.live then
         if not self.starter then
             return self:_error("KinAMP daemon is not running; start KinAMP first")
@@ -955,11 +966,6 @@ function KindleAudio:open(path, options)
         self.deadline = self.clock() + self.service_start_timeout
         self:_schedule()
         return true
-    end
-    if probe.status
-        and (probe.status.state == "playing"
-            or probe.status.state == "paused") then
-        return self:_error("KinAMP is busy")
     end
     self.baseline_token = probe.token
     self:_log_publication(probe.token)
