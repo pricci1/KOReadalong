@@ -80,9 +80,17 @@ KinAMP 3.0.0. It covered Bluetooth playback, playback controls, synchronized
 ephemeral highlighting, pause/resume, ±15-second seeks, chapter handoff, clip
 handoff, stop/restart, and document-close cleanup.
 
-The automatic service-start path is a new release-candidate change. Its
-missing-installation, timeout, readiness, and busy behavior is regression-tested;
-end-to-end validation of that new path on the physical Kindle is still required.
+The first-version candidate's automatic service startup was additionally tested
+on this device on October 8, 2026: absent-daemon startup, pause/resume, seeks,
+browse/return, stop, missing-player and startup-timeout recovery, busy-client
+refusal, and native close/reopen with automatic restart. The synthetic
+chapter-transition fixture crossed spine index 3 → a non-overlay item at 4 →
+the next narrated item at 5, reached EOF, and released its temporary audio.
+The integrated Bluetooth prompt/settings and closed-handle recovery were also
+verified. These new checks used status/clock and rendered-UI evidence, not
+audible confirmation: a connected-headphone listening check remains the final
+first-version acceptance gate. The installed full player identifies 3.0.0;
+the minimal daemon's exact version remains unverified.
 
 ### Troubleshooting
 
@@ -100,6 +108,12 @@ files. Exit status 0 means the selected checks passed, 2 identifies a known
 problem, and 3 means a check was unavailable or inconclusive. Its report
 sanitizes media paths and is suitable for attaching to a bug report. Use
 `sh scripts/kinamp-diagnostic --help` for path overrides and all checks.
+
+KOReader's optional HTTP inspector is unauthenticated and can invoke arbitrary
+methods. Use it only on a trusted LAN for testing, never expose it publicly,
+and stop it and disable autostart afterward. Prefer native book opening during
+device tests: this session saw a reader crash on inspector-triggered fixture
+reopening, while native close/reopen succeeded; its cause is not established.
 
 | Symptom | Check | Remedy |
 | --- | --- | --- |
