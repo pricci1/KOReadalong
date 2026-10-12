@@ -86,8 +86,9 @@ end)
 
 describe("EPUB media overlays", function()
     it("follows spine order and ignores overlay documents outside the spine", function()
-        local clips, error_message = parse_fixture()
+        local clips, error_message, skipped_clips = parse_fixture()
         assert.is_nil(error_message)
+        assert.are.equal(0, skipped_clips)
         assert.are.equal(4, #clips)
 
         assert.are.same({
@@ -268,6 +269,77 @@ describe("EPUB media overlay loading", function()
         local timeline, timeline_error = Timeline.new(clips)
         assert.is_nil(timeline_error)
         assert.are.equal(clips[1], timeline:lookup(clips[1].audio_path, 0))
+    end)
+
+    it("skips nonpositive intervals without losing a zero-clock resource handoff", function()
+        local mixed_smil = [[
+<smil><body><seq>
+    <par><text src="../text/chapter.xhtml#before"/>
+        <audio src="../audio/chapter.mp3" clipBegin="1.25s" clipEnd="2.5s"/></par>
+    <par><text src="../text/chapter.xhtml#reversed"/>
+        <audio src="../audio/chapter.mp3" clipBegin="1553.880s" clipEnd="1549.003s"/></par>
+    <par><text src="../text/chapter.xhtml#after"/>
+        <audio src="../audio/next.mp3" clipBegin="0s" clipEnd="3s"/></par>
+    <par><text src="../text/chapter.xhtml#empty"/>
+        <audio src="../audio/next.mp3" clipBegin="3s" clipEnd="3s"/></par>
+</seq></body></smil>
+]]
+        local clips, error_message, skipped_clips = MediaOverlays.load(callback_for({
+            ["META-INF/container.xml"] = CONTAINER,
+            ["books/OPS/package.opf"] = LOADER_OPF,
+            ["books/OPS/media/chapter.smil"] = mixed_smil,
+        }, {}))
+        assert.is_nil(error_message)
+        assert.are.equal(2, skipped_clips)
+        assert.are.same({
+            { text_path = "books/OPS/text/chapter.xhtml", text_fragment = "before",
+                audio_path = "books/OPS/audio/chapter.mp3", spine_index = 0,
+                clip_begin = 1.25, clip_end = 2.5 },
+            { text_path = "books/OPS/text/chapter.xhtml", text_fragment = "after",
+                audio_path = "books/OPS/audio/next.mp3", spine_index = 0,
+                clip_begin = 0, clip_end = 3 },
+        }, clips)
+        local timeline = assert(Timeline.new(clips))
+        assert.are.equal(clips[2], timeline:lookup(clips[2].audio_path, 0))
+        local elapsed, duration, chapter, chapter_count = timeline:getBookProgress(
+            clips[2].audio_path, 1
+        )
+        assert.are.same({ 2.25, 4.25, 1, 1 }, { elapsed, duration, chapter, chapter_count })
+    end)
+
+    it("returns no playable clips and an aggregate count when all intervals are invalid", function()
+        local clips, error_message, skipped_clips = MediaOverlays.parse(
+            OPF, "book/package.opf", {
+                ["book/media/other.smil"] = OTHER_SMIL:gsub('clipEnd="1:03"', 'clipEnd="1:02.25"'),
+                ["book/media/chapter.smil"] = SMIL:gsub('clipEnd="1s"', 'clipEnd="0s"'),
+            }
+        )
+        assert.is_nil(error_message)
+        assert.are.same({}, clips)
+        assert.are.equal(2, skipped_clips)
+    end)
+
+    it("does not turn malformed clocks, missing fields or escaping paths into skipped clips", function()
+        for _, case in ipairs{
+            { SMIL:gsub('clipEnd="1s"', 'clipEnd="fast"'), "invalid SMIL clock" },
+            { SMIL:gsub('clipBegin="0"', ''), "missing clipBegin" },
+            { SMIL:gsub('clipEnd="1s"', 'clipEnd="0s"')
+                :gsub('../audio/chapter.mp3', '../../../../audio/chapter.mp3'), "escapes EPUB ZIP root" },
+            { SMIL:gsub('clipEnd="1s"', 'clipEnd="0s"')
+                :gsub('../text/chapter.xhtml', '../../../../text/chapter.xhtml'), "escapes EPUB ZIP root" },
+        } do
+            local smil = case[1]:gsub("<seq>", [[<seq>
+<par><text src="../text/chapter.xhtml#skipped"/>
+<audio src="../audio/chapter.mp3" clipBegin="2s" clipEnd="1s"/></par>]])
+            local clips, error_message, skipped_clips = MediaOverlays.load(callback_for({
+                ["META-INF/container.xml"] = CONTAINER,
+                ["books/OPS/package.opf"] = LOADER_OPF,
+                ["books/OPS/media/chapter.smil"] = smil,
+            }, {}))
+            assert.is_nil(clips)
+            assert.matches(case[2], error_message)
+            assert.is_nil(skipped_clips)
+        end
     end)
 
     it("prefers an EPUB package rootfile media type", function()

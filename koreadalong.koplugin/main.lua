@@ -654,16 +654,32 @@ function KoReadalong:onReaderReady()
         return
     end
 
-    local ok, clips = pcall(function()
+    local ok, clips, load_error, skipped_clips = pcall(function()
         return MediaOverlays.load(function(path)
             return self:_read_document_file(path)
         end)
     end)
-    if not ok or type(clips) ~= "table" or #clips == 0 then
+    if not ok or load_error or type(clips) ~= "table" then
         return
     end
 
-    local timeline = Timeline.new(clips)
+    local timeline
+    if #clips > 0 then
+        timeline = Timeline.new(clips)
+        if not timeline then
+            return
+        end
+    end
+    if skipped_clips and skipped_clips > 0 then
+        local message = string.format(_([[KoReadalong skipped narration clips with an end time at or before their start time.
+Skipped clips: %d.]]), skipped_clips)
+        if timeline then
+            message = message .. "\n\n" .. _("The remaining narration is available through Read along. Some text will not be synchronized.")
+        else
+            message = message .. "\n\n" .. _("No valid narration clips remain. Read along is unavailable for this book.")
+        end
+        UIManager:show(InfoMessage:new{ text = message })
+    end
     if not timeline then
         return
     end

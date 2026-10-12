@@ -73,6 +73,7 @@ files = {
   <par><text src="first.xhtml#first-sentence"/><audio src="first.wav" clipBegin="0s" clipEnd="2s"/></par>
   <par><text src="first.xhtml#first-sentence"/><audio src="first.wav" clipBegin="2s" clipEnd="4s"/></par>
   <par><text src="first.xhtml#next-sentence"/><audio src="first.wav" clipBegin="4s" clipEnd="6s"/></par>
+  <par><text src="first.xhtml#next-sentence"/><audio src="first.wav" clipBegin="1553.880s" clipEnd="1549.003s"/></par>
 </seq></body></smil>
 """,
     "book/second.xhtml": """<?xml version="1.0" encoding="UTF-8"?>
@@ -81,6 +82,7 @@ files = {
     "book/second.smil": """<?xml version="1.0" encoding="UTF-8"?>
 <smil xmlns="http://www.w3.org/ns/SMIL"><body><seq>
   <par><text src="second.xhtml#second-sentence"/><audio src="second.wav" clipBegin="0s" clipEnd="2s"/></par>
+  <par><text src="second.xhtml#second-sentence"/><audio src="second.wav" clipBegin="2s" clipEnd="2s"/></par>
 </seq></body></smil>
 """,
 }
@@ -184,11 +186,15 @@ function Smoke:onReaderReady()
         return
     end
     self.started = true
-    local clips, parse_error = MediaOverlays.load(function(path)
+    local clips, parse_error, skipped_clips = MediaOverlays.load(function(path)
         return self.document:getDocumentFileContent(path)
     end)
     assert(clips, parse_error)
     assert(#clips == 4, "expected four smoke clips")
+    assert(skipped_clips == 2, "expected reversed and zero-length clips to be skipped")
+    assert(clips[3].spine_index == 0 and clips[3].clip_end == 6)
+    assert(clips[4].spine_index == 1 and clips[4].clip_begin == 0)
+    logger.info("SMOKE_INTERVALS retained=4 skipped=2 resource_clock_reset=true")
 
     local direct_range, direct_error = FragmentResolver.resolve(
         self.document,
@@ -554,6 +560,7 @@ if [[ "$status" -ne 0 ]]; then
 fi
 
 grep -F "SMOKE_RESOLVE ok=true" "$run_log" >/dev/null
+grep -F "SMOKE_INTERVALS retained=4 skipped=2 resource_clock_reset=true" "$run_log" >/dev/null
 grep -F "SMOKE_COMPAT inline=true repeated_targets=true exact_ranges=4" "$run_log" >/dev/null
 grep -F "SMOKE_COMPAT_PLAYBACK clips=4 ranges=true" "$run_log" >/dev/null
 grep -F "SMOKE_PLAYBACK state=playing" "$run_log" >/dev/null

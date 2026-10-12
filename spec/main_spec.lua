@@ -11,6 +11,7 @@ describe("KoReadalong lifecycle and menu", function()
     local info_message
     local registered_menu_widget
     local overlays_available
+    local skipped_clips
     local goto_events
     local range_visible
     local current_xpointer
@@ -108,6 +109,7 @@ describe("KoReadalong lifecycle and menu", function()
             self.selected_text = nil
         end
         overlays_available = true
+        skipped_clips = 0
         registered_menu_widget = nil
         goto_events = {}
         range_visible = true
@@ -336,7 +338,7 @@ describe("KoReadalong lifecycle and menu", function()
         package.preload["mediaoverlays"] = function()
             return {
                 load = function()
-                    return overlays_available and clips or {}
+                    return overlays_available and clips or {}, nil, skipped_clips
                 end,
             }
         end
@@ -464,6 +466,38 @@ describe("KoReadalong lifecycle and menu", function()
         assert.is_nil(plugin.overlay)
         assert.is_nil(registered_menu_widget)
         assert.are.equal(0, highlight.add_count)
+        assert.are.equal(0, #ui_manager.shown)
+    end)
+
+    for _, kindle in ipairs{ false, true } do
+        it("warns once and keeps playback available on " .. (kindle and "Kindle" or "desktop"), function()
+            is_kindle = kindle
+            skipped_clips = 2
+            plugin:onReaderReady()
+            plugin:onReaderReady()
+            plugin:onPageUpdate()
+            assert.are.equal(1, #ui_manager.shown)
+            assert.matches("Skipped clips: 2", ui_manager.shown[1].text)
+            assert.matches("end time at or before their start time", ui_manager.shown[1].text)
+            assert.matches("remaining narration", ui_manager.shown[1].text)
+            assert.are.equal(plugin, registered_menu_widget)
+            assert.is_true(plugin:onShowReadAlongControls())
+        end)
+    end
+
+    it("explains all-invalid narration once without offering playback", function()
+        overlays_available = false
+        skipped_clips = 3
+        plugin:onReaderReady()
+        plugin:onReaderReady()
+        plugin:onPageUpdate()
+        assert.are.equal(1, #ui_manager.shown)
+        assert.matches("Skipped clips: 3", ui_manager.shown[1].text)
+        assert.matches("No valid narration clips remain", ui_manager.shown[1].text)
+        assert.matches("Read along is unavailable", ui_manager.shown[1].text)
+        assert.is_nil(registered_menu_widget)
+        assert.is_nil(plugin.coordinator)
+        assert.is_false(plugin:onShowReadAlongControls())
     end)
 
     it("routes the registered Return to narration dispatcher event", function()
@@ -496,6 +530,7 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.equal(1, highlight.add_count)
         assert.is_function(highlight.buttons["12_read_from_here"])
         assert.are.equal(plugin, registered_menu_widget)
+        assert.are.equal(0, #ui_manager.shown)
 
         local items = {}
         plugin:addToMainMenu(items)

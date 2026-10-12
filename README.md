@@ -200,6 +200,13 @@ or the panel never starts audio automatically. **Start here** finds the first
 valid narrated segment at or after the reader's current logical position;
 **Stop** stops narration and resets the session to the first clip.
 
+Overlay clips whose end time is at or before their start time are skipped
+without changing the EPUB or inventing corrected timestamps. A warning once
+per book opening reports the count; valid clips remain usable. Skipped text
+has no synchronized overlay, but the underlying audio may still play. If no
+valid clips remain, the warning explains that Read along is unavailable.
+Malformed clocks, broken references, and other structural errors remain fatal.
+
 After narration has confirmed a location, the panel also offers **Resume**,
 **Start here**, and **Start over**. **Resume** restores the saved clip and
 audio position after the book or KOReader has been closed. The saved value is

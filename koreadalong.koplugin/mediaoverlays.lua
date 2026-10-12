@@ -375,6 +375,7 @@ local function parse_smil(smil_xml, smil_path, content_path)
         return nil, "SMIL document has no body"
     end
     local clips = {}
+    local skipped_clips = 0
     local par_number = 0
     local function walk(node)
         if node.name == "par" then
@@ -397,13 +398,19 @@ local function parse_smil(smil_xml, smil_path, content_path)
             if not fragment or fragment == "" then
                 return nil, "SMIL par " .. par_number .. " text src has no fragment"
             end
-            local text_path
+            local text_path, text_path_error
             if text_reference_path == "" and content_path then
                 text_path = content_path
             else
-                text_path = resolve_reference(smil_path, text_reference_path)
+                text_path, text_path_error = resolve_reference(smil_path, text_reference_path)
             end
-            local audio_path = resolve_reference(smil_path, audio.attributes.src)
+            if not text_path then
+                return nil, "SMIL par " .. par_number .. " text src: " .. text_path_error
+            end
+            local audio_path, audio_path_error = resolve_reference(smil_path, audio.attributes.src)
+            if not audio_path then
+                return nil, "SMIL par " .. par_number .. " audio src: " .. audio_path_error
+            end
             local clip_begin, begin_error = parse_clock(audio.attributes.clipBegin)
             if not clip_begin then
                 return nil, "SMIL par " .. par_number .. " clipBegin: " .. begin_error
@@ -413,7 +420,8 @@ local function parse_smil(smil_xml, smil_path, content_path)
                 return nil, "SMIL par " .. par_number .. " clipEnd: " .. end_error
             end
             if clip_end <= clip_begin then
-                return nil, "SMIL par " .. par_number .. " clipEnd must be after clipBegin"
+                skipped_clips = skipped_clips + 1
+                return true
             end
             clips[#clips + 1] = {
                 text_path = text_path,
@@ -436,7 +444,7 @@ local function parse_smil(smil_xml, smil_path, content_path)
     if not ok then
         return nil, walk_error
     end
-    return clips
+    return clips, nil, skipped_clips
 end
 
 function MediaOverlays.parse_clock(value)
@@ -566,6 +574,9 @@ local function parse_package_metadata(opf_xml, opf_path)
     return overlay_documents
 end
 
+-- parse/load return clips, nil, skipped_clips on success (including zero
+-- retained clips), or nil, error on failure. The count contains no book paths
+-- or text; only parsed nonpositive intervals are recoverable.
 function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
     local overlay_documents, metadata_error = parse_package_metadata(
         opf_xml,
@@ -579,12 +590,13 @@ function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
         return nil, documents_error
     end
     local clips = {}
+    local skipped_clips = 0
     for _, document in ipairs(overlay_documents) do
         local smil_xml = documents[document.path]
         if not smil_xml then
             return nil, "SMIL document not provided for '" .. document.path .. "'"
         end
-        local smil_clips, smil_error = parse_smil(
+        local smil_clips, smil_error, smil_skipped_clips = parse_smil(
             smil_xml,
             document.path,
             document.content_path
@@ -592,12 +604,13 @@ function MediaOverlays.parse(opf_xml, opf_path, smil_documents)
         if not smil_clips then
             return nil, "invalid SMIL '" .. document.path .. "': " .. smil_error
         end
+        skipped_clips = skipped_clips + smil_skipped_clips
         for _, clip in ipairs(smil_clips) do
             clip.spine_index = document.spine_index
             clips[#clips + 1] = clip
         end
     end
-    return clips
+    return clips, nil, skipped_clips
 end
 
 local function read_archive_entry(read_file, path, description)
