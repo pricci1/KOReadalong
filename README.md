@@ -39,7 +39,9 @@ Kindle models or firmware.
 2. Install KinAMP separately according to
    [kbarni/KinAMP](https://github.com/kbarni/KinAMP). KinAMP is a separate
    GPLv3+ dependency; install both its player binaries/libraries and its enabled
-   KOReader plugin. KoReadalong does not bundle or copy KinAMP source.
+   KOReader plugin. For Opus-in-MP4 narration, see the
+   [experimental player fork](#experimental-opus-in-mp4-player) below.
+   KoReadalong does not bundle or copy KinAMP source.
 3. Install `koreadalong.koplugin` in KOReader and restart KOReader.
 4. Connect your Bluetooth audio device. **KinAMP setup and help → Bluetooth
    setup** opens the official plugin's existing device settings.
@@ -48,14 +50,15 @@ Kindle models or firmware.
    waits for readiness before loading narration. No terminal or separate player
    start/stop step is needed.
 
-The embedded audio must also be supported by KinAMP. The tested player routes
-local `.m4a`, `.m4b`, and `.mp4` files through its MP4/AAC reader and FAAD2;
-Opus inside MP4 is not supported, even when the EPUB declares `audio/mp4`.
-Changing the extension or installing a GStreamer Opus plugin does not fix
-that decoder path. Use an EPUB prepared with AAC-in-M4A/MP4 audio, or use the
-desktop mpv backend for Opus. Any conversion should produce a separate book
-copy and preserve the overlay references and timing; KoReadalong does not
-transcode or modify the original book automatically.
+The embedded audio must also be supported by the installed player. The tested
+upstream KinAMP player routes local `.m4a`, `.m4b`, and `.mp4` files through its
+MP4/AAC reader and FAAD2; it cannot decode Opus inside MP4, even when the EPUB
+declares `audio/mp4`. Changing the extension or installing a GStreamer Opus
+plugin does not fix that decoder path. The experimental fork below adds
+Opus-in-MP4 decoding. Without it, use AAC-in-M4A/MP4 audio or the desktop mpv
+backend. Any conversion should produce a separate book copy and preserve the
+overlay references and timing; KoReadalong does not transcode or modify the
+original book automatically.
 
 An already-running idle service is reused. Playing or paused external audio is
 left untouched and produces a busy prompt. **Pause/Resume**, seeks, **Stop**,
@@ -90,6 +93,29 @@ delivers a playback command, correct the condition and press **Start** again
 without reopening the EPUB. Once resource ownership is uncertain, playback
 remains terminal for that document.
 
+### Experimental Opus-in-MP4 player
+
+The [pricci1/KinAMP-fork `prototype/opus-mp4` source branch](https://github.com/pricci1/KinAMP-fork/tree/prototype/opus-mp4)
+adds Opus-in-MP4 decoding while retaining AAC playback and the existing KinAMP
+plugin/FIFO interface. Its v2 minimal player was installed and tested on a
+Paperwhite 6, firmware 5.19.3.0.1, with KOReader v2026.07.1 and native GStreamer
+0.10 Bluetooth output. Native acceptance covered AAC and synthetic Opus
+playback, pause/resume, seeks, chapter handoff across a non-narrated spine item,
+EOF/restart, close-during-playback cleanup, and silent reopening. The owner
+also confirmed clear audible output and working pauses during standalone tests.
+
+This is an experimental source branch, **not a published binary release** or
+an automatic KoReadalong upgrade. Keep the official KinAMP KOReader plugin
+and its libraries; the tested installation replaced only `KinAMP-minimal`
+with a build matching that device's runtime. Source and build notes are on the
+fork branch. Do not use a desktop or differently targeted binary on Kindle.
+
+The player is being dogfooded on that one device. Long-session reliability,
+battery use, other Kindle models, and fragmented/encrypted MP4 support are not
+certified. Existing LIPC keepalive warnings, status-position limitations, and
+the legacy AAC descriptor leak remain; this is not an upstream KinAMP release
+or a whole-book audio-quality guarantee.
+
 ### Tested configuration
 
 Physical validation used a Kindle Paperwhite 6 with KOReader v2026.07.1 and
@@ -116,9 +142,10 @@ fixed build then passed pause/resume, both 15-second seeks, six Stop/Start
 cycles, and three Home → Continue → Start → close cycles without a crash.
 The same reader process survived throughout; reopening did not start audio,
 and close released the session receipt and left the daemon absent. This is
-bounded stability evidence, not a guarantee against every crash. The earlier
-audible confirmation predates the fix: final-build listening confirmation
-remains the release gate, so the candidate is not yet declared release-ready.
+bounded stability evidence, not a guarantee against every crash. Listening
+confirmation was still pending at that checkpoint; the later fork acceptance
+and its remaining limits are described above. Neither establishes a broad
+release-readiness or whole-book audio-quality claim.
 
 Orphan recovery passed automated regressions, a real-KinAMP backend test, and
 native Start in a reopened reader: it stopped the exact recorded orphan in the
@@ -155,7 +182,7 @@ with the inspector stopped; disabling the inspector alone does not fix it.
 | KinAMP's launcher reports `libfaad.so.2 => not found` | From the KinAMP directory, run `LD_LIBRARY_PATH=libs_hf ldd ./KinAMP-minimal`. Check the extracted package for `KinAMP/libs_hf` and `KinAMP/libs_pw2`. | The KinAMP 3.0.0 `kinamp.zip` tested on August 28, 2026 omitted both library directories required by its launchers. On an armhf Kindle, copy `KinAMP/libs_hf` from the 3.0 beta archive when this diagnostic reports the missing library. Preserve the newer 3.0.0 binaries and launchers. |
 | Read along reports a missing KinAMP installation | Check that the official plugin is enabled and its player binaries and bundled libraries are installed. | Complete the separate KinAMP installation and restart KOReader. Start in Read along handles service startup. |
 | KinAMP did not become ready | Run the read-only diagnostic and check player dependencies. A process with broken IPC is not replaced. | Correct the installation/dependency problem and press **Start** again. Startup waits are bounded and do not block the reader. |
-| Read along times out waiting for KinAMP audio | A timeout alone is not a codec diagnosis. Check the selected extracted media with `ffprobe` and the player's decoder evidence; an Opus MP4 produces `atom 'mp4a' not found` and `Failed to open file with mp4read` in the tested player. | For confirmed Opus-in-MP4, use a separately prepared AAC book copy or the desktop backend. Switching KinAMP's GStreamer flavour does not add Opus decoding. |
+| Read along times out waiting for KinAMP audio | A timeout alone is not a codec diagnosis. Check the selected extracted media with `ffprobe` and the player's decoder evidence; an Opus MP4 produces `atom 'mp4a' not found` and `Failed to open file with mp4read` in the tested upstream player. | For confirmed Opus-in-MP4, consider the [experimental player fork](#experimental-opus-in-mp4-player), a separately prepared AAC book copy, or the desktop backend. Switching upstream KinAMP's GStreamer flavour does not add Opus decoding. |
 | Read along reports that KinAMP is busy | Check whether KinAMP is already playing or paused, or whether another client is using it. | Stop the current KinAMP playback or other client, leave KinAMP idle, and press **Start** again. Concurrent KinAMP clients are not supported. |
 | KinAMP disappears after changing between the file manager and reader | The official plugin can quit an idle KinAMP daemon during that switch. | Open the EPUB and use **Start here** or saved **Resume**; KoReadalong arranges service readiness again. |
 | Timing or seeks are slightly coarse | KinAMP publishes positions in whole seconds and rounds seek requests to the nearest second. | Treat Kindle timing as degraded; this is expected for the KinAMP path. |

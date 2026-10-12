@@ -568,6 +568,11 @@ describe("KoReadalong lifecycle and menu", function()
             "https://github.com/kbarni/KinAMP/blob/master/README.md",
             ui_manager.shown[1].text
         )
+        assert.matches("experimental PW6%-tested source branch, not a binary release", ui_manager.shown[1].text)
+        assert.matches(
+            "https://github.com/pricci1/KinAMP%-fork/tree/prototype/opus%-mp4",
+            ui_manager.shown[1].text
+        )
         assert.are.equal("Bluetooth setup", ui_manager.shown[1].ok_text)
         local opened = 0
         package.loaded.kinamp_btdevices = { open = function() opened = opened + 1 end }

@@ -30,9 +30,12 @@ local KINAMP_HELP = _([[KinAMP setup and help
 
 Install and enable the official KinAMP plugin and player separately, then restart KOReader.
 
-Read along starts the audio service automatically. Use KoReadalong to pause, seek and stop. Closing a book stops narration; reopening never starts audio.
+Read along starts KinAMP automatically. Closing a book stops narration; reopening never starts audio.
 
-Connect your audio device using Bluetooth setup, which opens KinAMP’s existing settings. KoReadalong does not change the radio or replace another client’s playback.
+Bluetooth setup opens KinAMP’s existing settings. KoReadalong leaves the radio and other clients alone.
+
+Opus-in-MP4: experimental PW6-tested source branch, not a binary release:
+https://github.com/pricci1/KinAMP-fork/tree/prototype/opus-mp4
 
 Official KinAMP documentation:
 https://github.com/kbarni/KinAMP/blob/master/README.md]])
