@@ -306,6 +306,51 @@ function PlaybackDialog:init()
     } } }
     self.expanded_buttons = { rows[1], self.compact_buttons[2],
         { rows[2][1], rows[4][2] }, rows[3] }
+    if type(self.coordinator.supportsSpeed) == "function" then
+        self.speed_buttons = {
+            {
+                id = "speed_down", text = _("−0.1×"),
+                enabled_func = function()
+                    return self.coordinator:isSpeedEnabled()
+                        and self.coordinator:getPlaybackStatus().speed > 0.5
+                end,
+                callback = function()
+                    self:_run(function()
+                        local speed = self.coordinator:getPlaybackStatus().speed
+                        return self.coordinator:setSpeed(math.max(0.5,
+                            (math.floor(speed * 10 + 0.5) - 1) / 10))
+                    end)
+                end,
+            },
+            {
+                id = "speed_reset", text = _("1× · Reset"),
+                enabled_func = function()
+                    return self.coordinator:isSpeedEnabled()
+                end,
+                callback = function()
+                    self:_run(function() return self.coordinator:setSpeed(1) end)
+                end,
+            },
+            {
+                id = "speed_up", text = _("+0.1×"),
+                enabled_func = function()
+                    return self.coordinator:isSpeedEnabled()
+                        and self.coordinator:getPlaybackStatus().speed < 3
+                end,
+                callback = function()
+                    self:_run(function()
+                        local speed = self.coordinator:getPlaybackStatus().speed
+                        return self.coordinator:setSpeed(math.min(3,
+                            (math.floor(speed * 10 + 0.5) + 1) / 10))
+                    end)
+                end,
+            },
+        }
+        self.speed_visible = self.coordinator:supportsSpeed()
+        if self.speed_visible then
+            table.insert(self.expanded_buttons, 3, self.speed_buttons)
+        end
+    end
     self.buttons = self.compact_buttons
 
     self.refresh_action = function()
@@ -348,7 +393,7 @@ end
 function PlaybackDialog:_schedule_refresh()
     local state = self.coordinator:getState()
     local needs_refresh = state == "playing" or state == "loading"
-        or state == "stopping"
+        or state == "stopping" or state == "paused"
     if needs_refresh and not self.refresh_scheduled and self.is_open then
         self.refresh_scheduled = true
         self.scheduler:scheduleIn(REFRESH_INTERVAL, self.refresh_action)
@@ -360,13 +405,35 @@ end
 
 function PlaybackDialog:_refresh(full_refresh)
     local status = self.coordinator:getPlaybackStatus()
+    if self.speed_buttons and self.speed_visible ~= (status.speed ~= nil) then
+        self.speed_visible = status.speed ~= nil
+        if self.speed_visible then
+            table.insert(self.expanded_buttons, 3, self.speed_buttons)
+        else
+            table.remove(self.expanded_buttons, 3)
+        end
+        if self.expanded then
+            self.layout = nil
+            self:reinit()
+            UIManager:setDirty("all", "ui")
+            full_refresh = true
+        end
+    end
     local position = status.position
     local duration = status.duration
+    local label = state_label(status.state, self:_get_follow_state())
+    if status.speed then
+        label = label .. string.format(" · %g×", status.speed)
+        local speed_button = self:getButtonById("speed_reset")
+        if speed_button then
+            speed_button:setText(string.format(_("%g× · Reset"), status.speed), speed_button.width)
+        end
+    end
     local status_text = string.format(
         "%s\n" .. _("Track time: %s / %s")
             .. "\n" .. _("Book (overlays): %s / %s")
             .. "\n" .. _("Narrated chapter: %s / %s"),
-        state_label(status.state, self:_get_follow_state()),
+        label,
         format_time(position),
         format_time(duration),
         format_time(status.book_position), format_time(status.book_duration),
@@ -377,7 +444,8 @@ function PlaybackDialog:_refresh(full_refresh)
         status_text = status_text .. "\n" .. _("Text highlighting unavailable")
     end
     local layout_changed = false
-    if self.status_text.text ~= status_text then
+    local text_changed = self.status_text.text ~= status_text
+    if text_changed then
         -- Very long durations/localized labels can exceed the initial reserve.
         -- Measure unbounded text before updating the cached parent layout.
         local measured = TextBoxWidget:new{
@@ -405,6 +473,7 @@ function PlaybackDialog:_refresh(full_refresh)
         and duration > 0 then
         percentage = math.max(0, math.min(1, position / duration))
     end
+    local progress_changed = self.progress_bar.percentage ~= percentage
     self.progress_bar:setPercentage(percentage)
 
     local toggle_button = self:getButtonById("toggle")
@@ -415,8 +484,11 @@ function PlaybackDialog:_refresh(full_refresh)
 
     if full_refresh or self.last_state ~= status.state then
         UIManager:setDirty(self, "ui", self.movable.dimen)
-    elseif self.status_group.dimen then
-        UIManager:setDirty(self, "fast", self.status_group.dimen)
+    elseif self.progress_bar.dimen
+        and (status.state ~= "paused" or text_changed or progress_changed) then
+        -- VerticalGroup has no painted rectangle; refresh its rendered children.
+        UIManager:setDirty(self, "fast", self.status_text.dimen)
+        UIManager:setDirty(self, "fast", self.progress_bar.dimen)
     end
     self.last_state = status.state
 end

@@ -65,6 +65,18 @@ local function daemon_status(state, position, duration, path)
     }
 end
 
+local function speed_status(state, position_ms, path, supported, speed)
+    local status = daemon_status(state, math.floor(position_ms / 1000), 20, path)
+    status.capabilities = "speed-v1"
+    status.speed_min = 0.5
+    status.speed_max = 3
+    status.speed_formats = "aac-mp4,opus-mp4"
+    status.speed_supported = supported
+    status.speed = speed or 1
+    status.pos_ms = position_ms
+    return status
+end
+
 local function make_port(options)
     options = options or {}
     local port = {
@@ -257,6 +269,76 @@ local function start_ready(options)
 end
 
 describe("KinAMP Kindle audio adapter", function()
+    it("discovers speed for the owned track and resumes its millisecond position without seeking", function()
+        local path = "/mnt/us/book/audio.mp4"
+        local audio, timer, port = start_ready{
+            refreshes = { {
+                live = true, token = "p1",
+                status = speed_status("stopped", 0, "", false, 2),
+            } },
+        }
+        assert.is_false(audio:supportsSpeed())
+        assert.is_nil(audio:setSpeed(1.6))
+        assert.is_true(audio:open(path, { position = 2.3, paused = true, speed = 1.6 }))
+        assert.are.same({
+            { "load", "/tmp/koreadalong-test-playlist-1.m3u" },
+            { "speed", 1.6 }, { "index", 0 }, { "seek", 2 }, { "pause" },
+        }, batch_with(port, "load"))
+        port:queue{
+            live = true, token = "a1",
+            status = speed_status("paused", 2345, path, true, 1.6),
+        }
+        tick(timer)
+        assert.is_true(audio:supportsSpeed())
+        assert.are.equal(2.345, audio:getStatus().position)
+        assert.are.equal("paused", audio:getStatus().state)
+        assert.is_true(audio:setSpeed(0.8))
+        assert.are.same({ { "speed", 0.8 } }, port.commands[#port.commands])
+        port:queue{
+            live = true, token = "a2",
+            status = speed_status("paused", 2345, path, true, 0.8),
+        }
+        tick(timer)
+        assert.are.equal(0.8, audio:getStatus().speed)
+        assert.are.equal("paused", audio:getStatus().state)
+        local seeks_before = command_count(port, "seek")
+        assert.is_true(audio:setPaused(false))
+        assert.is_true(audio:setPaused(false))
+        assert.are.equal(1, command_count(port, "play"))
+        assert.are.equal(seeks_before, command_count(port, "seek"))
+        port:queue{
+            live = true, token = "a3",
+            status = speed_status("playing", 2456, path, true, 0.8),
+        }
+        tick(timer)
+        assert.are.equal("playing", audio:getStatus().state)
+        assert.are.equal(2.456, audio:getStatus().position)
+    end)
+
+    it("keeps stock daemons and unsupported resources out of live speed control", function()
+        local audio, timer, port = start_ready()
+        for _, speed in ipairs{ false, 0.49, 3.01, math.huge, 0/0 } do
+            assert.is_nil(audio:open(AUDIO_PATH, { speed = speed }))
+        end
+        assert.is_true(audio:open(AUDIO_PATH, { speed = 1.7 }))
+        local unadvertised = speed_status("playing", 3456, AUDIO_PATH, true, 1.7)
+        unadvertised.capabilities = "not-speed-v1"
+        port:queue{ live = true, token = "a1", status = unadvertised }
+        tick(timer)
+        assert.is_false(audio:supportsSpeed())
+        assert.are.equal(3, audio:getStatus().position)
+        assert.is_nil(audio:setSpeed(2))
+        assert.are.equal(0, command_count(port, "speed"))
+        port:queue{
+            live = true, token = "a2",
+            status = speed_status("playing", 4567, AUDIO_PATH, false, 1.7),
+        }
+        tick(timer)
+        assert.is_false(audio:supportsSpeed())
+        assert.is_nil(audio:setSpeed(2))
+        assert.are.equal(0, command_count(port, "speed"))
+    end)
+
     it("starts idle and returns copied status snapshots", function()
         local audio = make_audio()
         local status = audio:getStatus()

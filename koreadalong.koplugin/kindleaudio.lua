@@ -52,8 +52,7 @@ local function finite_nonnegative(value)
 end
 
 local function round_seconds(value)
-    -- KinAMP accepts integer seconds.  Round the request once; report only
-    -- whole seconds observed in a daemon publication.
+    -- KinAMP accepts integer-second seek targets even when it publishes pos_ms.
     return math.floor(value + 0.5)
 end
 
@@ -207,6 +206,20 @@ local function normalize_status(status)
     if status.path ~= nil and type(status.path) ~= "string" then
         return nil, "KinAMP status has an invalid path"
     end
+    local speed_protocol = type(status.capabilities) == "string"
+        and ("," .. status.capabilities .. ","):find(",speed-v1,", 1, true) ~= nil
+    if speed_protocol and status.pos_ms ~= nil then
+        if not finite_nonnegative(status.pos_ms)
+            or status.pos_ms ~= math.floor(status.pos_ms) then
+            return nil, "KinAMP status has an invalid millisecond position"
+        end
+        position = status.pos_ms / 1000
+    end
+    local speed_capable = speed_protocol
+        and finite_nonnegative(status.speed_min) and status.speed_min <= 0.5
+        and finite_nonnegative(status.speed_max) and status.speed_max >= 3
+        and type(status.speed_formats) == "string"
+    local speed_supported = speed_capable and status.speed_supported == true
     return {
         state = status.state,
         position = position,
@@ -216,6 +229,10 @@ local function normalize_status(status)
         index = status.index,
         count = status.count,
         mode = status.mode,
+        speed_protocol = speed_protocol,
+        speed_capable = speed_capable,
+        speed_supported = speed_supported,
+        speed = status.speed,
     }
 end
 
@@ -285,6 +302,9 @@ function KindleAudio.new(options)
         command_attempted = false,
         open_sent = false,
         desired_paused = false,
+        desired_speed = 1,
+        speed_capable = false,
+        speed_supported = false,
         pause_pending = nil,
         seek_intent = nil,
         baseline_token = nil,
@@ -598,6 +618,9 @@ end
 
 function KindleAudio:_record(status)
     self.last_snapshot = copy(status)
+    self.speed_capable = status.speed_capable
+    self.speed_supported = status.speed_supported
+    self.status.speed = status.speed
     if status.duration ~= nil
         and (self.status.duration == nil or status.duration > 0) then
         self.status.duration = status.duration
@@ -651,6 +674,10 @@ function KindleAudio:_pause_reconcile(status)
     local command
     if self.desired_paused then
         command = { "pause" }
+    elseif status.speed_protocol then
+        -- speed-v1 preserves pause on seek; play resumes without rebuilding
+        -- the pipeline or rounding its original-media millisecond position.
+        command = { "play" }
     elseif status.position ~= nil then
         -- KinAMP 3.0 can move its synthetic clock backwards when its `play`
         -- command resumes a paused pipeline. Seeking to the published paused
@@ -794,8 +821,13 @@ function KindleAudio:_process_preload(snapshot)
     self:_log_publication(snapshot.token)
     local commands = {
         { "load", self.playlist_path },
-        { "index", 0 },
     }
+    -- Set the per-book request before starting the new resource. Old daemons
+    -- receive no speed command, even when a desktop speed was saved for it.
+    if status.speed_capable then
+        commands[#commands + 1] = { "speed", self.desired_speed }
+    end
+    commands[#commands + 1] = { "index", 0 }
     if self.seek_intent and self.seek_intent.target > 0 then
         commands[#commands + 1] = { "seek", self.seek_intent.target }
     end
@@ -956,9 +988,19 @@ function KindleAudio:open(path, options)
     if type(paused) ~= "boolean" then
         return nil, "open paused option must be boolean"
     end
+    local speed = options.speed
+    if speed == nil then
+        speed = 1
+    end
+    if not finite_nonnegative(speed) or speed < 0.5 or speed > 3 then
+        return nil, "playback speed must be between 0.5 and 3"
+    end
 
     self.audio_path = path
     self.desired_paused = paused
+    self.desired_speed = speed
+    self.speed_capable = false
+    self.speed_supported = false
     local rounded = round_seconds(position)
     self.seek_intent = rounded > 0 and { target = rounded } or nil
     self.status.position = 0
@@ -1027,6 +1069,30 @@ function KindleAudio:open(path, options)
     if self.state == KindleAudio.STATES.ERROR then
         return nil, self.status.error
     end
+    self:_schedule()
+    return true
+end
+
+function KindleAudio:supportsSpeed()
+    return self.speed_capable and self.speed_supported
+end
+
+function KindleAudio:setSpeed(speed)
+    if not finite_nonnegative(speed) or speed < 0.5 or speed > 3 then
+        return nil, "playback speed must be between 0.5 and 3"
+    end
+    if self.closed or self.terminal_error or self.stop_requested or self.stop_sent
+        or not self:supportsSpeed() or not self.open_sent
+        or not self.last_snapshot or not self:_matches(self.last_snapshot)
+        or (self.state ~= KindleAudio.STATES.PLAYING
+            and self.state ~= KindleAudio.STATES.PAUSED) then
+        return nil, "KinAMP playback speed control is unavailable"
+    end
+    local sent, error_message = self:_send{{ "speed", speed }}
+    if not sent then
+        return self:_error(error_message)
+    end
+    self.desired_speed = speed
     self:_schedule()
     return true
 end

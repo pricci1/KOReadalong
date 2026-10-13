@@ -23,6 +23,7 @@ local OBSERVED_PROPERTIES = {
     "duration",
     "pause",
     "idle-active",
+    "speed",
 }
 
 local function finite_nonnegative(value)
@@ -85,6 +86,8 @@ function MpvAudio.new(options)
         observers_sent = false,
         desired_position = nil,
         desired_paused = nil,
+        desired_speed = 1,
+        speed_command_sent = nil,
         pause_command_sent = nil,
         stop_requested = false,
     }, MpvAudio)
@@ -341,6 +344,13 @@ function MpvAudio:_send_open_commands()
     if not sought then
         return nil, seek_error
     end
+    -- Apply speed before releasing the held track, including chapter handoffs.
+    if self.desired_speed ~= 1 or self.speed_command_sent then
+        local changed, speed_error = self:_send_speed_command()
+        if not changed then
+            return nil, speed_error
+        end
+    end
     local paused, pause_error = self:_send_pause_command(self.desired_paused)
     if not paused then
         return nil, pause_error
@@ -429,6 +439,8 @@ function MpvAudio:_on_property_change(message)
         self.status.paused = message.data
     elseif property == "idle-active" and type(message.data) == "boolean" then
         self.status.idle_active = message.data
+    elseif property == "speed" and type(message.data) == "number" then
+        self.status.speed = message.data
     end
     self:_reconcile()
 end
@@ -596,6 +608,13 @@ function MpvAudio:open(local_file_path, options)
     if type(paused) ~= "boolean" then
         return nil, "open paused option must be boolean"
     end
+    local speed = options.speed
+    if speed == nil then
+        speed = self.desired_speed
+    end
+    if not finite_nonnegative(speed) or speed < 0.5 or speed > 3 then
+        return nil, "playback speed must be between 0.5 and 3"
+    end
     if self.state ~= MpvAudio.STATES.STARTUP
         and self.state ~= MpvAudio.STATES.IDLE then
         return nil, "audio resource is still active"
@@ -620,6 +639,7 @@ function MpvAudio:open(local_file_path, options)
     self.observers_sent = false
     self.desired_position = position
     self.desired_paused = paused
+    self.desired_speed = speed
     self.pause_command_sent = nil
     self.stop_requested = false
     self:_set_state(MpvAudio.STATES.LOADING)
@@ -635,6 +655,36 @@ function MpvAudio:open(local_file_path, options)
         end
     end
     return true
+end
+
+function MpvAudio:_send_speed_command()
+    local request_id, send_error = self:_next_request(
+        { "set_property", "speed", self.desired_speed }, "speed", self.generation
+    )
+    if not request_id then
+        self:_fail(send_error)
+        return nil, send_error
+    end
+    self.speed_command_sent = self.desired_speed
+    return true
+end
+
+function MpvAudio:setSpeed(speed)
+    if self.closed or self.abort_started then
+        return nil, "mpv audio adapter is closed or has failed"
+    end
+    if not finite_nonnegative(speed) or speed < 0.5 or speed > 3 then
+        return nil, "playback speed must be between 0.5 and 3"
+    end
+    if self.stop_requested then
+        return nil, "audio is stopping"
+    end
+    self.desired_speed = speed
+    if not self.connected or self.awaiting_file_loaded
+        or not self.observers_sent then
+        return true
+    end
+    return self:_send_speed_command()
 end
 
 function MpvAudio:setPaused(paused)

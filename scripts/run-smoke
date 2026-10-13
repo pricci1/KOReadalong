@@ -476,23 +476,35 @@ function Smoke:onReaderReady()
                             assert(coordinator:getState() == "paused")
                             playback_dialog:_refresh(true)
                             take_screenshot("expanded-paused")
-                            playback_dialog:getButtonById("more").callback()
-                            playback_dialog:getButtonById("follow").callback()
+                            for _ = 1, 3 do
+                                playback_dialog:getButtonById("speed_up").callback()
+                            end
+                            assert(coordinator:getPlaybackStatus().speed == 1.3)
+                            assert(coordinator:getState() == "paused")
+                            UIManager:scheduleIn(0.05, function()
+                                take_screenshot("expanded-speed")
+                            end)
                             UIManager:scheduleIn(0.1, function()
-                                take_screenshot("compact-paused-follow-off")
-                                -- Simulate unavailable text only in this synthetic capture.
-                                local range = coordinator.current_range
-                                coordinator.current_range = nil
-                                playback_dialog:_refresh(true)
+                                playback_dialog:getButtonById("more").callback()
+                                playback_dialog:getButtonById("follow").callback()
                                 UIManager:scheduleIn(0.1, function()
-                                    take_screenshot("compact-missing-text")
-                                    coordinator.current_range = range
-                                    playback_dialog:getButtonById("follow").callback()
-                                    playback_dialog:getButtonById("toggle").callback()
+                                    take_screenshot("compact-paused-follow-off")
+                                    -- Simulate unavailable text only in this synthetic capture.
+                                    local range = coordinator.current_range
+                                    coordinator.current_range = nil
+                                    playback_dialog:_refresh(true)
+                                    UIManager:scheduleIn(0.1, function()
+                                        take_screenshot("compact-missing-text")
+                                        coordinator.current_range = range
+                                        playback_dialog:getButtonById("follow").callback()
+                                        playback_dialog:getButtonById("toggle").callback()
+                                    end)
                                 end)
                             end)
                         end)
                     end)
+                else
+                    assert(coordinator:setSpeed(1.3))
                 end
             end)
             UIManager:scheduleIn(screenshot_dir and 1.3 or 0.45, browse_away)
@@ -504,6 +516,8 @@ function Smoke:onReaderReady()
             assert(coordinator.range_cache[1] and coordinator.range_cache[2]
                 and coordinator.range_cache[3], "formatted/repeated clips were not played")
             logger.info("SMOKE_COMPAT_PLAYBACK clips=4 ranges=true")
+            assert(status.speed == 1.3, "chapter handoff lost playback speed")
+            logger.info("SMOKE_SPEED speed=1.3 chapter_handoff=true")
             if not overlay.pos0
                 or not self.document:isXPointerInCurrentPage(overlay.pos0) then
                 fail("expected visible second-chapter underline")
@@ -563,6 +577,7 @@ grep -F "SMOKE_RESOLVE ok=true" "$run_log" >/dev/null
 grep -F "SMOKE_INTERVALS retained=4 skipped=2 resource_clock_reset=true" "$run_log" >/dev/null
 grep -F "SMOKE_COMPAT inline=true repeated_targets=true exact_ranges=4" "$run_log" >/dev/null
 grep -F "SMOKE_COMPAT_PLAYBACK clips=4 ranges=true" "$run_log" >/dev/null
+grep -F "SMOKE_SPEED speed=1.3 chapter_handoff=true" "$run_log" >/dev/null
 grep -F "SMOKE_PLAYBACK state=playing" "$run_log" >/dev/null
 grep -F "SMOKE_NAVIGATION chapter=2 range_visible=true" "$run_log" >/dev/null
 grep -F "SMOKE_BROWSE state=browsing snap_back=false" "$run_log" >/dev/null

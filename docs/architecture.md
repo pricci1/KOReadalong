@@ -39,9 +39,10 @@ KOReader reader ◀── XPointer/overlay adapter ◀── playback coordinato
   and confirmed audio position in KOReader's per-book `DocSettings` sidecar.
   It rejects changed clip timelines and is independent of annotations and
   rendered screen geometry.
-- **Audio adapter:** exposes `open(path, { position = 0, paused = false })`,
-  `setPaused`, `seek`, `stop`, `getStatus`, and `close`. Desktop and Kindle
-  implementations must share this contract.
+- **Audio adapter:** exposes `open(path, { position = 0, paused = false, speed = 1 })`,
+  `setPaused`, `seek`, `stop`, `getStatus`, and `close`, with optional `setSpeed`
+  and dynamic `supportsSpeed`. Desktop and Kindle implementations share this
+  contract; speed changes never change pause intent or media-time units.
 
 ## Parser and timeline contract
 
@@ -205,6 +206,32 @@ unschedules refresh; an already-dequeued callback checks ownership before
 doing anything. Collapse dirties all window layers to repaint the entire old
 footprint, not just refresh pixels over the old panel without redrawing text.
 
+Speed control is an optional adapter capability (`setSpeed`, or a dynamic
+`supportsSpeed` when discovery is needed). The
+coordinator validates 0.5–3×, keeps the chosen speed separate from media clocks,
+and supplies it on every resource open. mpv applies speed before unpausing the
+new track and supports live changes without seeking or changing pause intent.
+The expanded panel offers 0.1× steps and a reset; unsupported adapters omit the
+row and speed label. Discovery can add/remove the row while the expanded panel
+is open; reinit preserves status widgets and dirties the old footprint.
+`main.lua` persists the choice in the per-book DocSettings
+key `koreadalong_playback_speed`, independently of resumable narration location.
+Stopping, starting over, or reaching EOF clears location, not speed.
+
+Pausing changes intent immediately, but adapter pause/seek commands can complete
+asynchronously. The coordinator keeps polling confirmed paused positions so the
+track/book clocks, range, and saved location converge to the backend observation.
+The panel likewise keeps checking paused status, but does not repaint unchanged
+paused text/progress. Partial refreshes use the text and progress bar's painted
+rectangles: their `VerticalGroup` provides layout, not a screen rectangle.
+Hide and document close still cancel their owned callbacks.
+
+Exit and Close broadcasts run the same idempotent cleanup synchronously, without
+consuming the event. Official KinAMP may quit paused audio during Exit while
+KOReader defers CloseDocument to the next tick; waiting for that later event
+lets a due narration poll show a daemon-disappeared prompt during shutdown.
+Early cleanup cancels active polling; it does not take over global daemon quit.
+
 Status text reserves measured height including the optional missing-text hint.
 Translated labels and long time samples are measured at the actual width;
 if a later string exceeds the reserve, an unbounded TextBoxWidget measurement
@@ -302,15 +329,31 @@ handled before playback acquisition: the native startup boundary arranges an
 absent service, while a busy daemon is left alone. The adapter never kills or
 quits a daemon.
 
-KinAMP's whole-second seek protocol is intentionally exposed as degraded
-timing: fractional requests are rounded to the nearest non-negative second,
-and reported positions are observed whole seconds rather than predicted
-fractions. KinAMP 3.0.0's `play` command can subtract stale pipeline running
-time when resuming, rewinding the published and audible position. The adapter
-therefore resumes by seeking to the last published paused second; KinAMP's
-seek starts a replacement playing pipeline without the faulty resume clock
-adjustment. No timing capability interface is exposed in this phase. KinAMP's
-current protocol can make external stop and natural EOF indistinguishable, so
+KinAMP's seek targets remain whole seconds: fractional requests are rounded to
+the nearest non-negative second. Stock positions are observed whole seconds
+rather than predicted fractions. KinAMP 3.0.0's `play` command can subtract
+stale pipeline running time when resuming, rewinding the published and audible
+position. For stock daemons the adapter therefore resumes by seeking to the
+last published paused second; that seek starts a replacement playing pipeline
+without the faulty resume clock adjustment.
+
+The opt-in KinAMP-fork speed prototype advertises an exact `speed-v1` capability
+token, speed limits, supported formats, and current-resource `speed_supported`.
+The adapter sends the saved speed between `load` and `index` only to a capable
+daemon, and exposes live controls only for a supported owned resource. Stock
+daemons receive no speed command. The prototype retains requested session speed
+across stop/load/seek, preserves pause on seeks, and resumes with `play`, so the
+stock seek-to-resume workaround must not be used with this protocol.
+`pos_ms` is converted to original-media seconds only for `speed-v1`; it is a
+clock/epoch estimate, not a Bluetooth playhead. Sonic pitch-preserving PCM
+processing and old-rate audio draining are owned by the external player;
+KoReadalong never predicts positions using the latest requested rate. The UI
+shows the per-book requested speed, not the rate already reaching the listener.
+These additions have host synthetic/real-daemon, supplied-runtime ARM/QEMU, and
+bounded native PW6 coverage described in the README. None establishes exact
+Bluetooth playhead correspondence, battery life, or long-session reliability.
+
+KinAMP's protocol can make external stop and natural EOF indistinguishable, so
 an owned fresh playing-to-stopped transition with a positive duration is
 treated as EOF even when the final position is stale; the last active observed
 position is retained. A stopped transition from paused playback is terminal

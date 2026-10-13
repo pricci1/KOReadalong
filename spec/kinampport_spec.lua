@@ -90,12 +90,13 @@ describe("KinAMP protocol port", function()
     it("encodes ordered command arrays and rejects raw multiline input", function()
         local payload = assert(KinAMPPort.encode{
             { "load", "/tmp/one.m3u" },
+            { "speed", 1.3 },
             { "index", 0 },
             { "seek", 3 },
             { "pause" },
         })
         assert.are.equal(
-            "load /tmp/one.m3u\nindex 0\nseek 3\npause\n",
+            "load /tmp/one.m3u\nspeed 1.3\nindex 0\nseek 3\npause\n",
             payload
         )
         assert.is_nil(KinAMPPort.encode("status\n"))
@@ -150,6 +151,24 @@ describe("KinAMP protocol port", function()
         assert.is_nil(KinAMPPort.parseStatus("state=stopped\nindex=-2\n"))
         assert.is_nil(KinAMPPort.parseStatus("state=stopped\npid=-1\n"))
         assert.is_nil(KinAMPPort.parseStatus("state=stopped\npos=-1\n"))
+    end)
+
+    it("parses the optional speed-v1 publication without weakening legacy fields", function()
+        local status = assert(KinAMPPort.parseStatus(IDLE_FIXTURE
+            .. "capabilities=speed-v1\nspeed=1.7\nspeed_min=0.5\nspeed_max=3\n"
+            .. "speed_formats=aac-mp4,opus-mp4\nspeed_supported=1\npos_ms=12345\n"))
+        assert.are.equal("speed-v1", status.capabilities)
+        assert.are.equal(1.7, status.speed)
+        assert.are.equal(0.5, status.speed_min)
+        assert.are.equal(3, status.speed_max)
+        assert.is_true(status.speed_supported)
+        assert.are.equal(12345, status.pos_ms)
+        for _, field in ipairs{
+            "speed=nan", "speed=inf", "speed=-1", "speed_supported=2",
+            "pos_ms=-1", "pos_ms=1.5",
+        } do
+            assert.is_nil(KinAMPPort.parseStatus(IDLE_FIXTURE .. field .. "\n"))
+        end
     end)
 
     it("rejects malformed or oversized bounded status", function()

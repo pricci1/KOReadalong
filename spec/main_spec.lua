@@ -364,7 +364,11 @@ describe("KoReadalong lifecycle and menu", function()
             },
             ui = {
                 highlight = highlight,
-                doc_settings = {},
+                doc_settings = {
+                    readSetting = function(self, key) return self[key] end,
+                    saveSetting = function(self, key, value) self[key] = value end,
+                    flush = function() end,
+                },
                 handleEvent = function(_, event)
                     goto_events[#goto_events + 1] = event
                     range_visible = true
@@ -422,6 +426,7 @@ describe("KoReadalong lifecycle and menu", function()
     end)
 
     it("wires the reader position and durable book state without autoplay", function()
+        plugin.ui.doc_settings.koreadalong_playback_speed = 1.7
         plugin:onReaderReady()
 
         assert.are.equal(current_xpointer, coordinator.options.get_current_xpointer())
@@ -430,6 +435,9 @@ describe("KoReadalong lifecycle and menu", function()
             coordinator.options.state_store.settings
         )
         assert.are.equal("idle", coordinator:getState())
+        assert.are.equal(1.7, coordinator.options.speed)
+        coordinator.options.on_speed(0.8)
+        assert.are.equal(0.8, plugin.ui.doc_settings.koreadalong_playback_speed)
     end)
 
     it("lazily selects Kindle audio on Kindle devices", function()
@@ -823,6 +831,10 @@ describe("KoReadalong lifecycle and menu", function()
         plugin:onDocumentPartiallyRerendered()
         assert.are.equal(1, overlay.invalidate_count)
 
+        coordinator.state = "paused"
+        assert.is_nil(plugin:onExit()) -- Do not consume KOReader's Exit broadcast.
+        assert.are.equal("closed", coordinator:getState())
+        assert.is_nil(plugin:onClose())
         plugin:onCloseDocument()
         plugin:onCloseWidget()
         assert.are.equal(1, coordinator.close_count)

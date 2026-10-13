@@ -69,6 +69,7 @@ describe("playback dialog", function()
             function options:setPercentage(percentage)
                 self.percentage = percentage
             end
+            options.dimen = { x = 20, y = 148, w = options.width, h = options.height }
             return options
         end
         local text_box_widget = simple_widget()
@@ -81,11 +82,11 @@ describe("playback dialog", function()
                 local _, lines = self.text:gsub("\n", "")
                 return { w = self.width, h = self.height or (lines + 1) * 20 }
             end
+            options.dimen = { x = 20, y = 20, w = options.width, h = options:getSize().h }
             return options
         end
         local vertical_group = simple_widget()
         function vertical_group:new(options)
-            options.dimen = { x = 20, y = 20, w = 400, h = 80 }
             function options:resetLayout()
                 self.resets = (self.resets or 0) + 1
             end
@@ -150,6 +151,7 @@ describe("playback dialog", function()
                 book_duration = self.duration,
                 can_seek = self:isSeekEnabled(),
                 has_text_range = self.has_text_range,
+                speed = self.speed,
             }
         end
         function coordinator:isSeekEnabled()
@@ -262,6 +264,42 @@ describe("playback dialog", function()
         end
     end)
 
+    it("adjusts and resets speed with bounded controls while paused", function()
+        coordinator.state = "paused"
+        function coordinator:supportsSpeed() return self.speed ~= nil end
+        function coordinator:isSpeedEnabled() return self:isActionEnabled() end
+        function coordinator:setSpeed(speed)
+            self.speed = speed
+            return true
+        end
+        local dialog = PlaybackDialog:new{ coordinator = coordinator, scheduler = scheduler }
+        dialog:onShow()
+        assert.is_nil(dialog:getButtonById("speed_up"))
+        dialog:getButtonById("more").callback()
+        assert.is_nil(dialog:getButtonById("speed_up"))
+        coordinator.speed = 1 -- Capability arrives after daemon/resource startup.
+        dialog:_refresh(true)
+        assert.are.equal(5, #dialog.buttons)
+        for _ = 1, 20 do dialog:getButtonById("speed_up").callback() end
+        assert.are.equal(3, coordinator.speed)
+        assert.is_false(dialog:getButtonById("speed_up").enabled_func())
+        assert.are.equal("3× · Reset", dialog:getButtonById("speed_reset").text)
+        for _ = 1, 25 do dialog:getButtonById("speed_down").callback() end
+        assert.are.equal(0.5, coordinator.speed)
+        assert.is_false(dialog:getButtonById("speed_down").enabled_func())
+        dialog:getButtonById("speed_reset").callback()
+        assert.are.equal(1, coordinator.speed)
+        assert.are.equal("paused", coordinator.state)
+        assert.is_truthy(dialog.status_text.text:find(" · 1×", 1, true))
+        coordinator.state = "loading"
+        assert.is_false(dialog:getButtonById("speed_reset").enabled_func())
+        coordinator.speed = nil -- Next resource does not support stretching.
+        dialog:_refresh(true)
+        assert.are.equal(4, #dialog.buttons)
+        assert.is_nil(dialog:getButtonById("speed_reset"))
+        assert.is_nil(dialog.status_text.text:find("×", 1, true))
+    end)
+
     it("shows transport controls and updates progress while playing", function()
         local dialog = PlaybackDialog:new{
             coordinator = coordinator,
@@ -296,10 +334,10 @@ describe("playback dialog", function()
         assert.are.same({ -15, 15 }, coordinator.seeks)
     end)
 
-    it("stops refreshes when paused", function()
+    it("refreshes late paused positions without repainting an unchanged panel", function()
         coordinator.state = "playing"
-        coordinator.position = 10
-        coordinator.duration = 20
+        coordinator.position = 2.85
+        coordinator.duration = 27
         local dialog = PlaybackDialog:new{
             coordinator = coordinator,
             scheduler = scheduler,
@@ -312,9 +350,20 @@ describe("playback dialog", function()
         assert.are.equal("paused", coordinator.state)
         assert.are.equal(1, coordinator.toggle_count)
         assert.are.equal("Resume", dialog:getButtonById("toggle").text)
-        assert.is_false(dialog.refresh_scheduled)
-        assert.is_nil(scheduler.tasks[dialog.refresh_action])
-        assert.are.equal(1, scheduler.unschedules)
+        assert.is_true(dialog.refresh_scheduled)
+        coordinator.position = 3.102 -- Daemon pause acknowledgement arrives later.
+        scheduler:fire(dialog.refresh_action)
+        assert.is_truthy(dialog.status_text.text:find("Track time: 0:03 / 0:27", 1, true))
+        assert.are.equal("fast", ui_manager.dirty[#ui_manager.dirty].refresh_type)
+        local redraws = #ui_manager.dirty
+        scheduler:fire(dialog.refresh_action)
+        assert.are.equal(redraws, #ui_manager.dirty)
+
+        coordinator.position = 18 -- Integer seek acknowledgement while still paused.
+        scheduler:fire(dialog.refresh_action)
+        assert.is_truthy(dialog.status_text.text:find("Track time: 0:18 / 0:27", 1, true))
+        assert.are.equal("Resume", dialog:getButtonById("toggle").text)
+        assert.are.equal("paused", coordinator.state)
     end)
 
     it("hides while playing without changing playback state", function()
@@ -390,7 +439,7 @@ describe("playback dialog", function()
             scheduler = scheduler,
         }
         dialog:onShow()
-        assert.is_nil(dialog.refresh_scheduled)
+        assert.is_true(dialog.refresh_scheduled)
         assert.are.equal("Hide", dialog:getButtonById("hide").text)
 
         dialog:getButtonById("hide").callback()
@@ -399,7 +448,8 @@ describe("playback dialog", function()
         assert.are.equal(20, coordinator.duration)
         assert.are.equal(0, coordinator.toggle_count)
         assert.are.equal(0, coordinator.stop_count)
-        assert.are.equal(0, scheduler.unschedules)
+        assert.are.equal(1, scheduler.unschedules)
+        assert.is_nil(scheduler.tasks[dialog.refresh_action])
         assert.are.equal(dialog, ui_manager.closed[1])
         assert.are.equal(1, dialog.base_close_count)
     end)

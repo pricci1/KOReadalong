@@ -116,6 +116,65 @@ certified. Existing LIPC keepalive warnings, status-position limitations, and
 the legacy AAC descriptor leak remain; this is not an upstream KinAMP release
 or a whole-book audio-quality guarantee.
 
+### Playback-speed prototype
+
+KoReadalong also interoperates with the opt-in
+[KinAMP-fork `prototype/playback-speed` source branch](https://github.com/pricci1/KinAMP-fork/tree/prototype/playback-speed).
+This is **not part of the installed/tested Opus player above** and is not a
+published binary upgrade. A compatible player advertises `capabilities=speed-v1` and
+the current resource's speed support. Only then does **More** reveal speed
+controls on Kindle. Stock KinAMP receives no speed commands and keeps its
+existing panel and resume workaround.
+
+The prototype supports 0.5–3× for AAC-in-MP4 and Opus-in-MP4 using pitch-preserving
+PCM processing. KoReadalong applies the saved per-book speed before starting
+each track; live changes do not resume paused playback. The displayed rate is
+the requested speed, not a measurement of already-audible audio: queued audio
+at the old rate drains first, so change latency is not guaranteed. Positions
+remain source-media time, with millisecond estimates from the prototype; seeks
+still round to whole seconds. Neither this clock nor the UI measures Bluetooth
+output latency.
+
+Host synthetic player tests and KoReadalong's real-daemon adapter checks cover
+speed, pause/resume, seeks, AAC/Opus handoff, EOF, and cleanup. The speed
+candidate builds against the supplied PW6 runtime, passes static ABI
+preflight, and passes a synthetic ARM/QEMU speed matrix with GStreamer 0.10.25
+and silent sinks. QEMU does not exercise native mixersink output.
+
+A separately staged speed candidate was also tested on the same PW6 and firmware
+with KOReader v2026.07.1, native mixersink libraries, and connected Bluetooth
+output. Public synthetic speech exercised both codecs, 0.5–3× limits, live
+changes, paused speed changes/seeks, AAC→Opus chapter handoff, EOF, and silent
+close/reopen with saved 1.5× applied to a fresh daemon. The owner listened at
+1× and 1.5× and reported that both sounded right; this is subjective feedback,
+not a whole-book speech-quality guarantee.
+
+Native testing exposed two client issues that are now fixed: paused clocks
+reconcile late backend observations and repaint their actual screen rectangles;
+Exit cancels narration callbacks before KinAMP can quit a paused daemon.
+Focused single-Exit trials while paused and playing both closed KOReader with
+exit code 0, released session files, and showed no daemon-disappeared prompt.
+These are bounded shutdown checks, not a power-off/reboot test.
+
+Comparable standalone measurements used the same fixtures and native libraries:
+
+| Measurement | Accepted player 1× | Speed candidate 1× | Speed candidate 2× |
+| --- | ---: | ---: | ---: |
+| AAC observed EOF interval | 28.07 s | 28.07 s | 14.03 s |
+| Opus observed EOF interval | 30.06 s | 30.08 s | 15.03 s |
+| AAC CPU, median % of one core | 8.80% | 10.96% | 27.45% |
+| Opus CPU, median % of one core | 7.49% | 9.48% | 24.92% |
+
+EOF intervals are single-run status observations, not audible-output timing;
+CPU medians use three comparable runs, measuring process user+system tick deltas
+between the second and eighth one-second samples (about six seconds per window,
+excluding startup and EOF). Sending `speed 2` to the accepted player left its EOF
+intervals unchanged, as expected. Both players still exhibited the legacy AAC
+descriptor growth. These bounded tests do not establish battery life,
+long-session reliability, precise Bluetooth latency, or support for other Kindle
+models. The accepted installation was not upgraded; do not install a desktop or
+differently targeted binary on Kindle.
+
 ### Tested configuration
 
 Physical validation used a Kindle Paperwhite 6 with KOReader v2026.07.1 and
@@ -185,7 +244,7 @@ with the inspector stopped; disabling the inspector alone does not fix it.
 | Read along times out waiting for KinAMP audio | A timeout alone is not a codec diagnosis. Check the selected extracted media with `ffprobe` and the player's decoder evidence; an Opus MP4 produces `atom 'mp4a' not found` and `Failed to open file with mp4read` in the tested upstream player. | For confirmed Opus-in-MP4, consider the [experimental player fork](#experimental-opus-in-mp4-player), a separately prepared AAC book copy, or the desktop backend. Switching upstream KinAMP's GStreamer flavour does not add Opus decoding. |
 | Read along reports that KinAMP is busy | Check whether KinAMP is already playing or paused, or whether another client is using it. | Stop the current KinAMP playback or other client, leave KinAMP idle, and press **Start** again. Concurrent KinAMP clients are not supported. |
 | KinAMP disappears after changing between the file manager and reader | The official plugin can quit an idle KinAMP daemon during that switch. | Open the EPUB and use **Start here** or saved **Resume**; KoReadalong arranges service readiness again. |
-| Timing or seeks are slightly coarse | KinAMP publishes positions in whole seconds and rounds seek requests to the nearest second. | Treat Kindle timing as degraded; this is expected for the KinAMP path. |
+| Timing or seeks are slightly coarse | Stock KinAMP publishes whole seconds; the speed prototype adds millisecond estimates. Both round seek requests to the nearest second. | Treat Kindle timing as degraded; fractional estimates do not establish an exact audible playhead. |
 | Resume jumps backward after a pause | KinAMP 3.0.0's `play` command can rewind its synthetic clock. | Use KoReadalong's **Pause/Resume**. The adapter works around this by resuming with a whole-second `seek` to the last published paused position. |
 | Playback appears to finish after an external stop, or the final position is stale | KinAMP's protocol cannot distinguish an external stop from natural EOF. | Treat the result as ambiguous; avoid stopping the daemon from another client when reliable EOF detection matters. |
 | Audio continues after the controls disappear | **Hide** only hides the controls; it does not stop playback. | Reopen **Read along** to show the controls. Use **Stop** to stop narration and reset playback to the first clip. |
@@ -193,11 +252,13 @@ with the inspector stopped; disabling the inspector alone does not fix it.
 
 ### Workarounds and limitations
 
-- **Resume workaround:** KinAMP 3.0.0 can rewind its synthetic clock when
+- **Resume workaround:** Stock KinAMP 3.0.0 can rewind its synthetic clock when
   `play` resumes; KoReadalong uses a whole-second `seek` to the last published
-  paused position instead.
-- **Timing:** KinAMP publishes whole seconds and rounds seeks to the nearest
-  second; fractional positions are not reported.
+  paused position instead. The speed-v1 prototype resumes with `play` and
+  preserves pause when seeking.
+- **Timing:** Stock KinAMP publishes whole seconds. The speed-v1 prototype
+  publishes fractional estimates in source-media time; both still round seeks
+  to the nearest second. Output latency is not measured or compensated.
 - **Clients:** Only one KinAMP client is supported at a time. Do not start another
   player concurrently: KinAMP has no atomic claim/startup protocol, and its
   separate launcher can replace an existing daemon.
@@ -221,7 +282,17 @@ compact, bottom-anchored **Read along** panel with 15-second seek buttons,
 **Pause/Resume** (or **Start here** when idle), **Follow**, and **Hide**.
 **More** reveals **Stop**, saved **Resume**, **Start here**, **Start over**, and
 **Return to narration**; **Less** collapses those extra actions. Unavailable
-actions remain disabled. **Hide** leaves narration running; the assigned
+actions remain disabled. On supported backends, **More** also shows speed controls:
+**−0.1×** and **+0.1×** adjust from **0.5× to 3×**, and the middle **Reset**
+button returns to **1×**. On desktop speed can be changed before starting,
+while playing, or while paused, and is remembered per book across reopening
+and chapter changes. On Kindle the controls appear only after discovery of a
+supported track in the [speed prototype](#playback-speed-prototype); a saved
+speed is applied on start even before the controls appear.
+The compact status line shows the selected speed. Track and book times stay in
+original media seconds, so seeks and text synchronization remain unchanged.
+Stock Kindle/KinAMP omits speed controls and plays at its normal rate.
+**Hide** leaves narration running; the assigned
 gesture reopens the compact panel. Opening a book
 or the panel never starts audio automatically. **Start here** finds the first
 valid narrated segment at or after the reader's current logical position;
@@ -335,7 +406,8 @@ following across a resource transition, EOF handling, and cleanup.
 For native panel captures, create a scratch output directory and set
 `KOREADALONG_SMOKE_SCREENSHOT_DIR` to its absolute path when running
 `make smoke-integration`. The optional capture sequence exercises More/Less,
-Pause/Resume, Follow off, resource transition, and Finished; its missing-text
+Pause/Resume, speed adjustment while paused, Follow off, resource transition,
+and Finished; its missing-text
 frame temporarily removes the synthetic book's resolved range while paused.
 The run uses an isolated HOME and mpv's test-only null sink. To repeat at a
 narrower size, also set `EMULATE_READER_VIEWPORT='{x=0,y=0,w=400,h=700}'`.

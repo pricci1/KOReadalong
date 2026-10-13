@@ -104,9 +104,15 @@ end
 function PlaybackCoordinator.new(options)
     options = options or {}
     local clips = options.clips or {}
+    local speed = options.speed
+    if not finite_number(speed) or speed < 0.5 or speed > 3 then
+        speed = 1
+    end
     local self = setmetatable({
         adapter = options.adapter,
         scheduler = options.scheduler,
+        speed = speed,
+        on_speed = options.on_speed,
         archive_reader = options.archive_reader,
         materializer = options.materializer,
         timeline = options.timeline,
@@ -162,6 +168,7 @@ function PlaybackCoordinator.new(options)
             and (self.state == PlaybackCoordinator.STATES.LOADING
                 or self.state == PlaybackCoordinator.STATES.STOPPING
                 or self.state == PlaybackCoordinator.STATES.PLAYING
+                or self.state == PlaybackCoordinator.STATES.PAUSED
                 or (self.state == PlaybackCoordinator.STATES.ERROR
                     and self.cleanup_pending)) then
             self:_schedule_poll()
@@ -192,9 +199,42 @@ function PlaybackCoordinator:getPlaybackStatus()
         chapter_count = chapter_count,
         position = self.playback_position,
         duration = self.playback_duration,
+        speed = self:supportsSpeed() and self.speed or nil,
         can_seek = self:isSeekEnabled(),
         has_text_range = self.current_range ~= nil,
     }
+end
+
+function PlaybackCoordinator:supportsSpeed()
+    if self.adapter and type(self.adapter.supportsSpeed) == "function" then
+        return self.adapter:supportsSpeed()
+    end
+    return type(self.adapter and self.adapter.setSpeed) == "function"
+end
+
+function PlaybackCoordinator:isSpeedEnabled()
+    return self:supportsSpeed() and self:isActionEnabled()
+end
+
+function PlaybackCoordinator:setSpeed(speed)
+    if not finite_number(speed) or speed < 0.5 or speed > 3 then
+        return nil, "playback speed must be between 0.5 and 3"
+    end
+    if not self:isSpeedEnabled() then
+        return nil, "playback speed control is unavailable"
+    end
+    if self.state == PlaybackCoordinator.STATES.PLAYING
+        or self.state == PlaybackCoordinator.STATES.PAUSED then
+        local changed, speed_error = invoke(self.adapter, "setSpeed", speed)
+        if not changed then
+            return self:_fail(speed_error or "unable to change playback speed")
+        end
+    end
+    self.speed = speed
+    if type(self.on_speed) == "function" then
+        self.on_speed(speed)
+    end
+    return true
 end
 
 function PlaybackCoordinator:isActionEnabled()
@@ -765,6 +805,7 @@ function PlaybackCoordinator:_prepare_resource(index, initial_position)
         {
             position = open_position,
             paused = self.intent == PlaybackCoordinator.STATES.PAUSED,
+            speed = self.speed,
         }
     )
     if not opened then
@@ -942,7 +983,10 @@ function PlaybackCoordinator:_poll()
         self:_fail(status.error or "audio playback failed")
         return
     end
-    if type(status.position) == "number" then
+    local previous_position = self.playback_position
+    if type(status.position) == "number"
+        and (self.state ~= PlaybackCoordinator.STATES.PAUSED
+            or status.state == "paused") then
         self.playback_position = status.position
     end
     if type(status.duration) == "number" and status.duration > 0 then
@@ -966,6 +1010,13 @@ function PlaybackCoordinator:_poll()
     end
     if self.state == PlaybackCoordinator.STATES.PLAYING then
         self:_update_overlay(self.current_audio_path, status.position)
+    elseif self.state == PlaybackCoordinator.STATES.PAUSED
+        and status.state == "paused" and previous_position ~= self.playback_position then
+        -- Pause and seek commands acknowledge intent before their final clock
+        -- is observed. Reconcile that clock without resuming or repainting it
+        -- on every unchanged paused poll.
+        self:_update_overlay(self.current_audio_path, self.playback_position)
+        self:_confirm_location(self.current_clip_index, self.playback_position)
     end
 end
 
@@ -1087,7 +1138,7 @@ function PlaybackCoordinator:pause()
     end
     self.state = PlaybackCoordinator.STATES.PAUSED
     self.intent = PlaybackCoordinator.STATES.PAUSED
-    self:_unschedule_poll()
+    self:_schedule_poll()
     local status = invoke(self.adapter, "getStatus")
     if type(status) == "table" and finite_number(status.position) then
         self.playback_position = status.position

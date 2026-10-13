@@ -42,6 +42,7 @@ local COMMAND_ARITY = {
     stop = 0,
     seek = 1,
     status = 0,
+    speed = 1,
 }
 
 local function has_control_character(value)
@@ -331,7 +332,7 @@ local function parse_status(content, maximum)
                 end
                 status.state = value
             elseif key == "pid" or key == "index" or key == "count"
-                or key == "pos" or key == "dur" then
+                or key == "pos" or key == "dur" or key == "pos_ms" then
                 local number, integer_error = parse_integer(value, key)
                 if not number and integer_error then
                     return nil, integer_error
@@ -342,6 +343,18 @@ local function parse_status(content, maximum)
                 elseif key == "dur" then
                     status.duration = number
                 end
+            elseif key == "speed" or key == "speed_min" or key == "speed_max" then
+                local number = tonumber(value)
+                if not number or number ~= number or number == math.huge
+                    or number == -math.huge or number <= 0 then
+                    return nil, "invalid KinAMP speed field: " .. key
+                end
+                status[key] = number
+            elseif key == "speed_supported" then
+                if value ~= "0" and value ~= "1" then
+                    return nil, "invalid KinAMP speed support flag"
+                end
+                status.speed_supported = value == "1"
             else
                 status[key] = value
             end

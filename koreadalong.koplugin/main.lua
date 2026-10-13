@@ -703,6 +703,11 @@ Skipped clips: %d.]]), skipped_clips)
     self.coordinator = PlaybackCoordinator.new{
         adapter = new_audio_adapter(),
         scheduler = UIManager,
+        speed = self.ui.doc_settings:readSetting("koreadalong_playback_speed"),
+        on_speed = function(speed)
+            self.ui.doc_settings:saveSetting("koreadalong_playback_speed", speed)
+            self.ui.doc_settings:flush()
+        end,
         archive_reader = function(path)
             return self:_read_document_file(path)
         end,
@@ -831,5 +836,14 @@ end
 function KoReadalong:onCloseWidget()
     self:onCloseDocument()
 end
+
+function KoReadalong:onExit()
+    -- KinAMP can quit paused audio during this broadcast, before the reader's
+    -- deferred CloseDocument event. Cancel our active callbacks now.
+    self:onCloseDocument()
+end
+
+-- Power-off/reboot announces Close instead of Exit.
+KoReadalong.onClose = KoReadalong.onExit
 
 return KoReadalong

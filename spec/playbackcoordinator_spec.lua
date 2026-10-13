@@ -55,6 +55,7 @@ local function make_adapter()
     }
     function adapter:open(path, options)
         self.opens[#self.opens + 1] = path
+        self.speed = options.speed
         self.open_options[#self.open_options + 1] = {
             position = options.position,
             paused = options.paused,
@@ -79,6 +80,10 @@ local function make_adapter()
         self.commands[#self.commands + 1] = "seek"
         self.seeks[#self.seeks + 1] = position
         self.position = position
+        return true
+    end
+    function adapter:setSpeed(speed)
+        self.speed = speed
         return true
     end
     function adapter:setPaused(paused)
@@ -295,6 +300,8 @@ local function make_fixture(clips, options)
         overlay = overlay,
         clips = clips,
         state_store = options.state_store,
+        speed = options.speed,
+        on_speed = options.on_speed,
         get_current_xpointer = get_current_xpointer,
         on_range = function(pos0, pos1)
             ranges_shown[#ranges_shown + 1] = { pos0, pos1 }
@@ -442,6 +449,48 @@ local function saved_location(clip, pos0, pos1, position)
 end
 
 describe("playback coordinator", function()
+    it("changes speed without seeking, preserves pause, and rejects unavailable or invalid changes", function()
+        local saved_speed
+        local coordinator, scheduler, adapter = make_fixture(clips_fixture(), {
+            speed = 1.7,
+            on_speed = function(speed) saved_speed = speed end,
+        })
+        assert.are.equal(1.7, coordinator:getPlaybackStatus().speed)
+        assert.is_true(coordinator:setSpeed(0.8))
+        assert.is_nil(adapter.speed) -- Choosing speed while idle does not start audio.
+        assert.are.equal(0.8, saved_speed)
+        assert.is_true(coordinator:start())
+        assert.are.equal(0.8, adapter.speed)
+        assert.is_nil(coordinator:setSpeed(2)) -- Loading owns the track boundary.
+        mark_ready(adapter)
+        scheduler:fire_any()
+        assert.is_true(coordinator:pause())
+        local position = coordinator:getPlaybackStatus().position
+        assert.is_true(coordinator:setSpeed(2.3))
+        assert.are.equal(2.3, adapter.speed)
+        assert.are.equal(2.3, saved_speed)
+        assert.are.equal("paused", coordinator:getState())
+        assert.are.equal(position, coordinator:getPlaybackStatus().position)
+        assert.are.same({}, adapter.seeks)
+        for _, speed in ipairs{ 0.49, 3.01, math.huge, 0/0, "fast" } do
+            assert.is_nil(coordinator:setSpeed(speed))
+        end
+        adapter.setSpeed = nil
+        assert.is_false(coordinator:supportsSpeed())
+        assert.is_nil(coordinator:getPlaybackStatus().speed)
+        assert.is_nil(coordinator:setSpeed(1))
+        assert.are.equal(2.3, saved_speed)
+        function adapter:setSpeed() return true end
+        function adapter:supportsSpeed() return self.speed_available == true end
+        assert.is_false(coordinator:supportsSpeed())
+        assert.is_nil(coordinator:getPlaybackStatus().speed)
+        adapter.speed_available = true
+        assert.is_true(coordinator:supportsSpeed())
+        assert.are.equal(2.3, coordinator:getPlaybackStatus().speed)
+        local default_speed = make_fixture(clips_fixture(), { speed = -1 })
+        assert.are.equal(1, default_speed:getPlaybackStatus().speed)
+    end)
+
     it("exposes overlay progress without changing track clocks or probing resources", function()
         local coordinator, _, adapter, materializer = make_fixture{
             { audio_path = "a", clip_begin = 11, clip_end = 31,
@@ -625,18 +674,39 @@ describe("playback coordinator", function()
         assert.are.equal(1, store.clears)
     end)
 
-    it("confirms the latest adapter position when pausing", function()
+    it("confirms late pause and rounded seek observations while remaining paused", function()
         local store = make_state_store()
-        local coordinator, scheduler, adapter = make_fixture(ranged_clips_fixture(), {
+        local clips = ranged_clips_fixture()
+        clips[1].clip_end = 12.325
+        clips[2].clip_begin = 12.325
+        clips[2].clip_end = 27.135
+        local coordinator, scheduler, adapter = make_fixture(clips, {
             state_store = store,
         })
         assert.is_true(coordinator:start())
         mark_ready(adapter)
+        adapter.duration = 27
         scheduler:fire_any()
-        adapter.position = 0.75
+        adapter.position = 2.85
+        function adapter:setPaused() return true end -- Acceptance precedes observation.
 
         assert.is_true(coordinator:pause())
-        assert.are.equal(0.75, store.saved.position)
+        assert.are.equal(2.85, store.saved.position)
+        adapter.state = "paused"
+        adapter.position = 3.102
+        scheduler:fire_any()
+        assert.are.equal("paused", coordinator:getState())
+        assert.are.equal(3.102, coordinator:getPlaybackStatus().position)
+        assert.are.equal(3.102, store.saved.position)
+
+        function adapter:seek() return true end -- Position arrives in a later snapshot.
+        assert.is_true(coordinator:seekBy(15))
+        adapter.position = 18 -- Integer-second backend seek, not requested 18.102.
+        scheduler:fire_any()
+        assert.are.equal("paused", coordinator:getState())
+        assert.are.equal(18, coordinator:getPlaybackStatus().position)
+        assert.are.equal(18, store.saved.position)
+        assert.are.same({ pos0 = "p20", pos1 = "p30" }, coordinator:getCurrentRange())
     end)
 
     it("persists a logical location across close and coordinator reopen", function()
@@ -1013,7 +1083,7 @@ describe("playback coordinator", function()
         assert.matches("finite number", error_message)
     end)
 
-    it("preserves the range across pause and resumes polling only after success", function()
+    it("preserves the range across pause and stops polling on a resume failure", function()
         local coordinator, scheduler, adapter, _, _, overlay =
             make_fixture(clips_fixture())
         coordinator:start()
@@ -1025,7 +1095,7 @@ describe("playback coordinator", function()
         assert.is_true(coordinator:pause())
         assert.are.equal("paused", coordinator:getState())
         assert.are.equal(ranges, #overlay.ranges)
-        assert.are.equal(0, scheduler.tasks[coordinator.poll_action] or 0)
+        assert.is_not_nil(scheduler.tasks[coordinator.poll_action])
 
         adapter.fail_set_paused = "resume failed"
         local ok = coordinator:resume()
@@ -1059,8 +1129,9 @@ describe("playback coordinator", function()
 
     it("hands off to the next chapter only after asynchronous stop acknowledgement", function()
         local coordinator, scheduler, adapter, materializer, _, _, _, ranges_shown =
-            make_fixture(clips_fixture())
+            make_fixture(clips_fixture(), { speed = 1.7 })
         coordinator:start()
+        assert.are.equal(1.7, adapter.speed)
         mark_ready(adapter)
         scheduler:fire_any()
         adapter.stop_waits = true
@@ -1081,6 +1152,7 @@ describe("playback coordinator", function()
         assert.are.equal("book/second.wav", materializer.paths[2]:match("book/second%.wav$"))
         assert.are.equal(1, #materializer.removed)
         assert.are.equal("loading", coordinator:getState())
+        assert.are.equal(1.7, adapter.speed)
         mark_ready(adapter)
         scheduler:fire_any()
         assert.are.equal(2, #adapter.opens)

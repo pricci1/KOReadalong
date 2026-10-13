@@ -130,7 +130,7 @@ describe("production mpv desktop audio integration", function()
 
         wav_path = os.tmpname() .. ".wav"
         invalid_path = os.tmpname() .. ".media"
-        write_wav(wav_path, 2)
+        write_wav(wav_path, 6)
         local invalid_file = assert(io.open(invalid_path, "wb"))
         invalid_file:write("not an audio file")
         invalid_file:close()
@@ -146,6 +146,7 @@ describe("production mpv desktop audio integration", function()
         local production_transport = MpvTransport.new()
         local seek_target
         local seek_observed = false
+        local pause_observed
         local pause_true_commands = 0
         local transport_send = production_transport.send
         function production_transport:send(message)
@@ -163,6 +164,10 @@ describe("production mpv desktop audio integration", function()
         function production_transport:poll(now)
             local events = transport_poll(self, now)
             for _, event in ipairs(events) do
+                if event.kind == "message" and event.message.event == "property-change"
+                    and event.message.name == "pause" and event.message.data == true then
+                    pause_observed = true
+                end
                 if seek_target == 0.2 and event.kind == "message"
                     and event.message.event == "property-change"
                     and event.message.name == "time-pos"
@@ -183,6 +188,7 @@ describe("production mpv desktop audio integration", function()
         assert.is_true(audio:open(wav_path, {
             position = 0.35,
             paused = false,
+            speed = 2,
         }))
         assert.is_true(wait_for(timer, function()
             return audio:getStatus().state == "playing"
@@ -191,6 +197,9 @@ describe("production mpv desktop audio integration", function()
         assert.are_not.equal("error", audio:getStatus().state, audio:getStatus().error)
         assert.is_true(audio:getStatus().duration > 0.7)
         assert.are.equal(0.35, seek_target)
+        assert.is_true(wait_for(timer, function()
+            return audio:getStatus().speed == 2
+        end, 0.8))
 
         local first_position = audio:getStatus().position or 0
         assert.is_true(wait_for(timer, function()
@@ -198,12 +207,13 @@ describe("production mpv desktop audio integration", function()
         end, 0.8))
 
         local pause_true_before = pause_true_commands
+        pause_observed = false
         assert.is_true(audio:setPaused(true))
         assert.is_true(audio:setPaused(true))
         assert.are.equal(pause_true_before + 1, pause_true_commands)
         assert.is_true(wait_for(timer, function()
-            return audio:getStatus().state == "paused"
-        end, 0.8))
+            return pause_observed and audio:getStatus().state == "paused"
+        end, 0.8), audio:getStatus().state)
         C.usleep(200000)
         timer:run_due()
         C.usleep(200000)
@@ -213,6 +223,11 @@ describe("production mpv desktop audio integration", function()
         timer:run_due()
         assert.is_true(math.abs((audio:getStatus().position or 0) - paused_position) < 0.06)
 
+        assert.is_true(audio:setSpeed(0.5))
+        assert.is_true(wait_for(timer, function()
+            return audio:getStatus().speed == 0.5
+        end, 0.8))
+        assert.are.equal("paused", audio:getStatus().state)
         assert.is_true(audio:seek(0.2))
         assert.is_true(wait_for(timer, function()
             return seek_observed
@@ -222,6 +237,15 @@ describe("production mpv desktop audio integration", function()
         assert.is_true(wait_for(timer, function()
             return audio:getStatus().state == "playing"
         end, 0.8))
+        -- Compare the real media clock to wall time, not merely an IPC ack.
+        local slow_position = audio:getStatus().position
+        local slow_start = monotonic()
+        while monotonic() - slow_start < 0.65 do
+            timer:run_due()
+            C.usleep(10000)
+        end
+        local advanced = audio:getStatus().position - slow_position
+        assert.is_true(advanced > 0.15 and advanced < 0.48, tostring(advanced))
 
         assert.is_true(audio:stop())
         assert.is_true(wait_for(timer, function()
@@ -231,11 +255,15 @@ describe("production mpv desktop audio integration", function()
         assert.is_true(audio:open(wav_path, {
             position = 0,
             paused = false,
+            speed = 2,
         }))
+        assert.is_true(wait_for(timer, function()
+            return audio:getStatus().speed == 2
+        end, 0.8))
         assert.is_true(wait_for(timer, function()
             return audio:getStatus().state == "ended"
                 or audio:getStatus().state == "error"
-        end, 3))
+        end, 5))
         assert.are.equal("ended", audio:getStatus().state, audio:getStatus().error)
 
         assert.is_true(audio:stop())
