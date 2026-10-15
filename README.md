@@ -414,3 +414,9 @@ narrower size, also set `EMULATE_READER_VIEWPORT='{x=0,y=0,w=400,h=700}'`.
 Only synthetic fixture text/audio is generated, never private book content.
 
 See [docs/architecture.md](docs/architecture.md) for the MVP boundaries and compatibility findings.
+
+## License
+
+KoReadalong is licensed under the [GNU Affero General Public License, version 3](LICENSE),
+the same license used by KOReader. Storyteller and KinAMP are separate projects
+with their own licenses.
