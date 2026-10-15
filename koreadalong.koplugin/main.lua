@@ -34,8 +34,9 @@ Read along starts KinAMP automatically. Closing a book stops narration; reopenin
 
 Bluetooth setup opens KinAMP’s existing settings. KOReadalong leaves the radio and other clients alone.
 
-Opus-in-MP4: experimental PW6-tested source branch, not a binary release:
-https://github.com/pricci1/KinAMP-fork/tree/prototype/opus-mp4
+Optional experimental PW6 player (Opus and speed) and Bluetooth guard:
+https://github.com/pricci1/KOReadalong/releases
+Read the Kindle guide before installing; neither is enabled automatically.
 
 Official KinAMP documentation:
 https://github.com/kbarni/KinAMP/blob/master/README.md]])

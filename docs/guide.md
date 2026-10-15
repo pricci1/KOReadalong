@@ -109,11 +109,12 @@ playback, pause/resume, seeks, chapter handoff across a non-narrated spine item,
 EOF/restart, close-during-playback cleanup, and silent reopening. The owner
 also confirmed clear audible output and working pauses during standalone tests.
 
-This is an experimental source branch, **not a published binary release** or
-an automatic KOReadalong upgrade. Keep the official KinAMP KOReader plugin
-and its libraries; the tested installation replaced only `KinAMP-minimal`
-with a build matching that device's runtime. Source and build notes are on the
-fork branch. Do not use a desktop or differently targeted binary on Kindle.
+This section records the earlier Opus-only candidate. The first KOReadalong
+beta provides a separate, optional Opus-and-speed player from the later candidate
+below; see the [current download and installation guide](kindle.md#choose-your-downloads).
+It is not an automatic upgrade. Keep the official KinAMP KOReader plugin and
+its libraries; replace only `KinAMP-minimal` with the exact compatible package.
+Do not use a desktop or differently targeted binary on Kindle.
 
 The player is being dogfooded on that one device. Long-session reliability,
 battery use, other Kindle models, and fragmented/encrypted MP4 support are not
@@ -126,7 +127,9 @@ or a whole-book audio-quality guarantee.
 KOReadalong also interoperates with the opt-in
 [KinAMP-fork `prototype/playback-speed` source branch](https://github.com/pricci1/KinAMP-fork/tree/prototype/playback-speed).
 This is **not part of the installed/tested Opus player above** and is not a
-published binary upgrade. A compatible player advertises `capabilities=speed-v1` and
+drop-in upgrade for every Kindle. The exact native-tested executable is available
+as an [optional first-beta download](kindle.md#install-the-optional-opusspeed-player).
+A compatible player advertises `capabilities=speed-v1` and
 the current resource's speed support. Only then does **More** reveal speed
 controls on Kindle. Stock KinAMP receives no speed commands and keeps its
 existing panel and resume workaround.

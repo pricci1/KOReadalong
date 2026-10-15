@@ -576,9 +576,10 @@ describe("KOReadalong lifecycle and menu", function()
             "https://github.com/kbarni/KinAMP/blob/master/README.md",
             ui_manager.shown[1].text
         )
-        assert.matches("experimental PW6%-tested source branch, not a binary release", ui_manager.shown[1].text)
+        assert.matches("Optional experimental PW6 player", ui_manager.shown[1].text)
+        assert.matches("neither is enabled automatically", ui_manager.shown[1].text)
         assert.matches(
-            "https://github.com/pricci1/KinAMP%-fork/tree/prototype/opus%-mp4",
+            "https://github.com/pricci1/KOReadalong/releases",
             ui_manager.shown[1].text
         )
         assert.are.equal("Bluetooth setup", ui_manager.shown[1].ok_text)

@@ -20,9 +20,10 @@ For example: open a narrated EPUB → **Read along** → **Start here**. The act
 sentence or paragraph is underlined. Turn a page to browse without stopping
 audio, then choose **Return to narration** to follow again.
 
-> **Beta preparation:** no KOReadalong prerelease has been published yet.
-> Kindle testers should read the [Kindle setup and limitations](docs/kindle.md)
-> before installing.
+> **First beta:** download [v0.1.0-beta.1](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.1).
+> The plugin, optional experimental Kindle Opus/speed player, and optional
+> Bluetooth guard are separate downloads. Read the [Kindle setup and
+> limitations](docs/kindle.md) before installing either companion.
 
 **Create your own readalouds with [Storyteller](https://storyteller-platform.dev/).**
 It aligns a DRM-free EPUB with its matching audiobook and produces an EPUB with
@@ -53,9 +54,11 @@ aligned books; it does not align a separate ebook and audiobook itself.
    sudo apt install mpv
    ```
 
-3. From a source checkout, copy `koreadalong.koplugin` into KOReader's `plugins`
-   directory. For a packaged beta, extract the versioned ZIP and copy that same
-   directory—not the entire extracted archive. Keep the directory name intact:
+3. Download `koreadalong-v0.1.0-beta.1.zip` from the
+   [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.1),
+   verify it against `SHA256SUMS`, and extract it. Copy `koreadalong.koplugin`
+   into KOReader's `plugins` directory—not the entire extracted archive.
+   From a source checkout, copy that same directory. Keep its name intact:
 
    ```text
    koreader/plugins/koreadalong.koplugin/main.lua
@@ -68,7 +71,9 @@ aligned books; it does not align a separate ebook and audiobook itself.
 Use the [Kindle tester guide](docs/kindle.md). You need a jailbroken Kindle,
 KOReader, KinAMP with its libraries and enabled KOReader plugin, and connected
 Bluetooth audio. **The KOReadalong ZIP does not install KinAMP or change the
-Kindle's Bluetooth policy.**
+Kindle's Bluetooth policy.** Optional player and guard ZIPs are available on the
+same prerelease; they are not required for stock KinAMP AAC playback. The guard
+requires the optional player and exact supported firmware.
 
 ## Start listening
 
@@ -103,8 +108,8 @@ See the [Kindle guide](docs/kindle.md) before planning a long listening session.
 
 ## Report a problem
 
-Use the issue tracker named in your prerelease, or send the report to the person
-who invited you to test. Include the release version, device and firmware,
+Use the [issue tracker](https://github.com/pricci1/KOReadalong/issues), or send the
+report to the person who invited you to test. Include the release version, device and firmware,
 KOReader version, player version, what you did, and what you expected. On Kindle,
 also say whether the Bluetooth guard was enabled and how long playback ran.
 
