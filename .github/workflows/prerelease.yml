@@ -1,0 +1,74 @@
+name: Prepare beta prerelease
+
+on:
+  push:
+    tags:
+      - 'v*-beta.*'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require a distribution license
+        run: test -s LICENSE
+      - name: Set up pinned KOReader and tools
+        run: ./.agents/setup
+      - name: Check and exercise real playback
+        run: make check mpv-integration smoke-integration
+      - name: Build plugin archive
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test -z "$(git status --porcelain)"
+          make dist VERSION="$RELEASE_TAG"
+          cd dist
+          sha256sum -c SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: beta-assets
+          path: dist/
+          if-no-files-found: error
+
+  draft:
+    needs: validate
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: beta-assets
+          path: dist
+      - name: Create draft prerelease for maintainer review
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cat > "$RUNNER_TEMP/notes.md" <<EOF
+          Read narrated EPUBs in KOReader with synchronized text underlining.
+
+          Download the versioned ZIP (not the automatic source archive), verify
+          SHA256SUMS, and copy only koreadalong.koplugin into KOReader's plugins
+          directory. Restart KOReader. Opening a book never starts audio.
+
+          - [Installation and use](https://github.com/$GH_REPO/blob/$RELEASE_TAG/README.md)
+          - [Kindle tester guide](https://github.com/$GH_REPO/blob/$RELEASE_TAG/docs/kindle.md)
+          - [Source and license](https://github.com/$GH_REPO/tree/$RELEASE_TAG)
+
+          Linux needs mpv. Experimental Kindle support was tested only on
+          Paperwhite 6 / firmware 5.19.3.0.1 / KOReader v2026.07.1.
+          KinAMP and the optional Bluetooth guard are NOT included in this ZIP.
+          Long-session reliability and battery use are not qualified.
+
+          MAINTAINER: Before publishing, add exact compatible Kindle player/guard
+          downloads, their source and license notices, the native acceptance
+          result, and tester contact instructions. Finish docs/releasing.md.
+          EOF
+          gh release create "$RELEASE_TAG" dist/* --verify-tag --draft \
+            --prerelease --latest=false --title "KoReadalong $RELEASE_TAG" \
+            --notes-file "$RUNNER_TEMP/notes.md"

@@ -1,10 +1,10 @@
 .PHONY: check lint run run-headless syntax test shell-test mpv-integration \
-	kinamp-integration smoke-integration
+	kinamp-integration smoke-integration release-test dist
 
 LUA_FILES := $(shell find koreadalong.koplugin spec -type f -name '*.lua' 2>/dev/null)
 BUSTED ?= /usr/bin/busted
 
-check: lint syntax test shell-test
+check: lint syntax test shell-test release-test
 
 lint:
 	luacheck -q koreadalong.koplugin spec
@@ -18,6 +18,12 @@ test:
 shell-test:
 	@for file in scripts/kinamp-diagnostic spec/kinamp_diagnostic_test.sh; do sh -n "$$file"; done
 	./spec/kinamp_diagnostic_test.sh
+
+release-test:
+	python3 spec/release_test.py
+
+dist:
+	python3 scripts/package-release "$(VERSION)"
 
 mpv-integration:
 	KOREADER_MPV_INTEGRATION=1 LUA_PATH='./koreadalong.koplugin/?.lua;.cache/koreader/lib/koreader/?.lua;.cache/koreader/lib/koreader/common/?.lua;/usr/share/lua/5.1/?.lua;/usr/share/lua/5.1/?/init.lua;;' LUA_CPATH='./.cache/koreader/lib/koreader/common/?.so;/usr/lib/x86_64-linux-gnu/lua/5.1/?.so;;' .cache/koreader/lib/koreader/luajit $(BUSTED) --verbose spec/mpv_integration_spec.lua

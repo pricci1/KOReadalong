@@ -1,4 +1,5 @@
 .cache/
+dist/
 .amp/portals/*
 *.sdr/
 luacov.*

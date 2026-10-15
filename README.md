@@ -115,6 +115,7 @@ Do not attach copyrighted books, private settings, or raw dumps. The
 
 For building and testing from source, see the
 [development guide](docs/guide.md#development) and [architecture](docs/architecture.md).
+Maintainers can follow the [prerelease checklist](docs/releasing.md).
 
 ## Credits
 
