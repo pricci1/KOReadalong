@@ -350,7 +350,7 @@ processing and old-rate audio draining are owned by the external player;
 KoReadalong never predicts positions using the latest requested rate. The UI
 shows the per-book requested speed, not the rate already reaching the listener.
 These additions have host synthetic/real-daemon, supplied-runtime ARM/QEMU, and
-bounded native PW6 coverage described in the README. None establishes exact
+bounded native PW6 coverage described in the [reference guide](guide.md#playback-speed-prototype). None establishes exact
 Bluetooth playhead correspondence, battery life, or long-session reliability.
 
 KinAMP's protocol can make external stop and natural EOF indistinguishable, so
@@ -419,7 +419,8 @@ platform-neutral playback coordinator. On Kindle, it maps busy preflight errors
 to a focused native prompt and exposes persistent KinAMP setup/help with a button
 opening the official `kinamp_btdevices.open()` settings; desktop/mpv errors remain
 unchanged. Installation, troubleshooting, workarounds, and physical
-validation are documented in the [Kindle/KinAMP section of the README](../README.md).
+validation are documented in the [Kindle tester guide](kindle.md) and
+[reference guide](guide.md#experimental-kindlekinamp-support).
 
 ## Tooling
 
@@ -437,6 +438,6 @@ platform-neutral playback, KOReader integration, desktop audio, playback
 controls, and representative rerender/page tests.
 
 The Kindle adapter is implemented and physically validated only on the tested
-configuration documented in the README. It remains experimental with degraded
+configuration documented in the [Kindle tester guide](kindle.md). It remains experimental with degraded
 timing; this validation does not claim support for other Kindle models or
 firmware.
