@@ -1,11 +1,11 @@
-# KoReadalong reference guide
+# KOReadalong reference guide
 
 For installation, start with the [README](../README.md) or the
 [Kindle tester guide](kindle.md). This reference preserves the detailed controls,
 backend behavior, and historical validation findings. Test results below describe
 specific checkpoints, not a guarantee for every device or a published release.
 
-KoReadalong is a [KOReader](https://github.com/koreader/koreader) plugin for reading EPUB 3 books alongside their embedded audio. The Linux desktop MVP plays EPUB Media Overlays and underlines the sentence or paragraph currently being narrated.
+KOReadalong is a [KOReader](https://github.com/koreader/koreader) plugin for reading EPUB 3 books alongside their embedded audio. The Linux desktop MVP plays EPUB Media Overlays and underlines the sentence or paragraph currently being narrated.
 
 The current implementation targets KOReader's Linux desktop build. Experimental
 Kindle playback is available through KinAMP with degraded timing; the tested
@@ -13,7 +13,7 @@ device, versions, and coverage are listed below.
 
 ## Install on Linux
 
-KoReadalong currently requires `mpv` on `PATH`. On Debian or Ubuntu:
+KOReadalong currently requires `mpv` on `PATH`. On Debian or Ubuntu:
 
 ```sh
 sudo apt install mpv
@@ -46,12 +46,12 @@ Kindle models or firmware.
    GPLv3+ dependency; install both its player binaries/libraries and its enabled
    KOReader plugin. For Opus-in-MP4 narration, see the
    [experimental player fork](#experimental-opus-in-mp4-player) below.
-   KoReadalong does not bundle or copy KinAMP source.
+   KOReadalong does not bundle or copy KinAMP source.
 3. Install `koreadalong.koplugin` in KOReader and restart KOReader.
 4. Connect your Bluetooth audio device. **KinAMP setup and help → Bluetooth
    setup** opens the official plugin's existing device settings.
 5. Open a narrated EPUB and press **Start here** (or saved **Resume**) in
-   **Read along**. KoReadalong starts an absent KinAMP service in idle mode and
+   **Read along**. KOReadalong starts an absent KinAMP service in idle mode and
    waits for readiness before loading narration. No terminal or separate player
    start/stop step is needed.
 
@@ -62,18 +62,18 @@ declares `audio/mp4`. Changing the extension or installing a GStreamer Opus
 plugin does not fix that decoder path. The experimental fork below adds
 Opus-in-MP4 decoding. Without it, use AAC-in-M4A/MP4 audio or the desktop mpv
 backend. Any conversion should produce a separate book copy and preserve the
-overlay references and timing; KoReadalong does not transcode or modify the
+overlay references and timing; KOReadalong does not transcode or modify the
 original book automatically.
 
 An already-running idle service is reused. Playing or paused external audio is
 left untouched and produces a busy prompt. **Pause/Resume**, seeks, **Stop**,
-and closing the book work through KoReadalong. Stop/close release only the
+and closing the book work through KOReadalong. Stop/close release only the
 read-along session; they never kill or quit a shared daemon. KinAMP's official
 plugin may close an idle daemon on reader/file-manager transitions or exit;
 the next Start arranges readiness again. Opening a book never starts audio.
 
 If KOReader crashes during narration, reopening and pressing **Start** can
-recover its orphaned track without quitting KinAMP. KoReadalong records the
+recover its orphaned track without quitting KinAMP. KOReadalong records the
 reader and daemon process start identities and private audio/playlist paths.
 Recovery requires a dead recorded reader, the same daemon generation, and
 fresh status matching that exact single-entry music track. It stops that track,
@@ -81,7 +81,7 @@ waits for stopped acknowledgement, cleans its recorded temporary files, then
 loads the new session. Unknown ownership is still refused as busy.
 
 KinAMP still owns its installation, Bluetooth, saved playlists, and player
-settings. KoReadalong does not pair devices or change the radio automatically.
+settings. KOReadalong does not pair devices or change the radio automatically.
 Its **KinAMP setup and help** menu provides the integrated Bluetooth route and the
 [official KinAMP documentation](https://github.com/kbarni/KinAMP/blob/master/README.md).
 When the official Bluetooth API confirms that no audio device is connected,
@@ -93,7 +93,7 @@ KinAMP's command FIFO and status file are
 `${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_cmd` and
 `${KINAMP_RUNTIME_DIR:-/tmp}/kinamp_status`. If `KINAMP_RUNTIME_DIR` is unset,
 both default to `/tmp`. Missing installation, startup timeout, or a busy daemon
-produces a playback prompt. If this is detected before KoReadalong creates a playlist or
+produces a playback prompt. If this is detected before KOReadalong creates a playlist or
 delivers a playback command, correct the condition and press **Start** again
 without reopening the EPUB. Once resource ownership is uncertain, playback
 remains terminal for that document.
@@ -110,7 +110,7 @@ EOF/restart, close-during-playback cleanup, and silent reopening. The owner
 also confirmed clear audible output and working pauses during standalone tests.
 
 This is an experimental source branch, **not a published binary release** or
-an automatic KoReadalong upgrade. Keep the official KinAMP KOReader plugin
+an automatic KOReadalong upgrade. Keep the official KinAMP KOReader plugin
 and its libraries; the tested installation replaced only `KinAMP-minimal`
 with a build matching that device's runtime. Source and build notes are on the
 fork branch. Do not use a desktop or differently targeted binary on Kindle.
@@ -123,7 +123,7 @@ or a whole-book audio-quality guarantee.
 
 ### Playback-speed prototype
 
-KoReadalong also interoperates with the opt-in
+KOReadalong also interoperates with the opt-in
 [KinAMP-fork `prototype/playback-speed` source branch](https://github.com/pricci1/KinAMP-fork/tree/prototype/playback-speed).
 This is **not part of the installed/tested Opus player above** and is not a
 published binary upgrade. A compatible player advertises `capabilities=speed-v1` and
@@ -132,7 +132,7 @@ controls on Kindle. Stock KinAMP receives no speed commands and keeps its
 existing panel and resume workaround.
 
 The prototype supports 0.5–3× for AAC-in-MP4 and Opus-in-MP4 using pitch-preserving
-PCM processing. KoReadalong applies the saved per-book speed before starting
+PCM processing. KOReadalong applies the saved per-book speed before starting
 each track; live changes do not resume paused playback. The displayed rate is
 the requested speed, not a measurement of already-audible audio: queued audio
 at the old rate drains first, so change latency is not guaranteed. Positions
@@ -140,7 +140,7 @@ remain source-media time, with millisecond estimates from the prototype; seeks
 still round to whole seconds. Neither this clock nor the UI measures Bluetooth
 output latency.
 
-Host synthetic player tests and KoReadalong's real-daemon adapter checks cover
+Host synthetic player tests and KOReadalong's real-daemon adapter checks cover
 speed, pause/resume, seeks, AAC/Opus handoff, EOF, and cleanup. The speed
 candidate builds against the supplied PW6 runtime, passes static ABI
 preflight, and passes a synthetic ARM/QEMU speed matrix with GStreamer 0.10.25
@@ -198,7 +198,7 @@ The integrated Bluetooth prompt/settings and closed-handle recovery were also
 verified. The user subsequently confirmed audible headphone playback with
 approximately one second of delay, but reported repeated native KOReader
 crashes with audio continuing. A kernel core from a never-debugger-attached
-reader, with Audiobook disabled, identified a KoReadalong heap overwrite:
+reader, with Audiobook disabled, identified a KOReadalong heap overwrite:
 string-initialized variable-length FFI buffers omitted the terminating NUL's
 space. The FIFO and playlist allocations are fixed without sending that NUL.
 The short-command/garbage-collection regression crashed with the old port on
@@ -221,7 +221,7 @@ daemon's exact version remains unverified.
 
 ### Troubleshooting
 
-From a KoReadalong checkout copied to the Kindle, run the read-only diagnostic
+From a KOReadalong checkout copied to the Kindle, run the read-only diagnostic
 over SSH before changing the installation:
 
 ```sh
@@ -249,9 +249,9 @@ with the inspector stopped; disabling the inspector alone does not fix it.
 | KinAMP did not become ready | Run the read-only diagnostic and check player dependencies. A process with broken IPC is not replaced. | Correct the installation/dependency problem and press **Start** again. Startup waits are bounded and do not block the reader. |
 | Read along times out waiting for KinAMP audio | A timeout alone is not a codec diagnosis. Check the selected extracted media with `ffprobe` and the player's decoder evidence; an Opus MP4 produces `atom 'mp4a' not found` and `Failed to open file with mp4read` in the tested upstream player. | For confirmed Opus-in-MP4, consider the [experimental player fork](#experimental-opus-in-mp4-player), a separately prepared AAC book copy, or the desktop backend. Switching upstream KinAMP's GStreamer flavour does not add Opus decoding. |
 | Read along reports that KinAMP is busy | Check whether KinAMP is already playing or paused, or whether another client is using it. | Stop the current KinAMP playback or other client, leave KinAMP idle, and press **Start** again. Concurrent KinAMP clients are not supported. |
-| KinAMP disappears after changing between the file manager and reader | The official plugin can quit an idle KinAMP daemon during that switch. | Open the EPUB and use **Start here** or saved **Resume**; KoReadalong arranges service readiness again. |
+| KinAMP disappears after changing between the file manager and reader | The official plugin can quit an idle KinAMP daemon during that switch. | Open the EPUB and use **Start here** or saved **Resume**; KOReadalong arranges service readiness again. |
 | Timing or seeks are slightly coarse | Stock KinAMP publishes whole seconds; the speed prototype adds millisecond estimates. Both round seek requests to the nearest second. | Treat Kindle timing as degraded; fractional estimates do not establish an exact audible playhead. |
-| Resume jumps backward after a pause | KinAMP 3.0.0's `play` command can rewind its synthetic clock. | Use KoReadalong's **Pause/Resume**. The adapter works around this by resuming with a whole-second `seek` to the last published paused position. |
+| Resume jumps backward after a pause | KinAMP 3.0.0's `play` command can rewind its synthetic clock. | Use KOReadalong's **Pause/Resume**. The adapter works around this by resuming with a whole-second `seek` to the last published paused position. |
 | Playback appears to finish after an external stop, or the final position is stale | KinAMP's protocol cannot distinguish an external stop from natural EOF. | Treat the result as ambiguous; avoid stopping the daemon from another client when reliable EOF detection matters. |
 | Audio continues after the controls disappear | **Hide** only hides the controls; it does not stop playback. | Reopen **Read along** to show the controls. Use **Stop** to stop narration and reset playback to the first clip. |
 | Audio continues after a reader crash | KinAMP is independent and does not monitor reader death. | Reopen KOReader and the EPUB, then press **Start**. A positively identified orphan is recovered automatically; unknown or other-client playback is left untouched. |
@@ -259,7 +259,7 @@ with the inspector stopped; disabling the inspector alone does not fix it.
 ### Workarounds and limitations
 
 - **Resume workaround:** Stock KinAMP 3.0.0 can rewind its synthetic clock when
-  `play` resumes; KoReadalong uses a whole-second `seek` to the last published
+  `play` resumes; KOReadalong uses a whole-second `seek` to the last published
   paused position instead. The speed-v1 prototype resumes with `play` and
   preserves pause when seeking.
 - **Timing:** Stock KinAMP publishes whole seconds. The speed-v1 prototype
@@ -269,8 +269,8 @@ with the inspector stopped; disabling the inspector alone does not fix it.
   player concurrently: KinAMP has no atomic claim/startup protocol, and its
   separate launcher can replace an existing daemon.
 - **Stop versus EOF:** An external stop and natural EOF are indistinguishable
-  to KoReadalong.
-- **Daemon ownership:** KoReadalong starts only an absent service, in idle mode,
+  to KOReadalong.
+- **Daemon ownership:** KOReadalong starts only an absent service, in idle mode,
   and verifies fresh idle status before playback. Existing processes without
   working IPC are left alone. Stop/close never quit or kill a daemon; the
   official plugin owns idle shutdown. Bluetooth connection remains a user action.
@@ -316,7 +316,7 @@ After narration has confirmed a location, the panel also offers **Resume**,
 audio position after the book or KOReader has been closed. The saved value is
 kept in the book's KOReader settings sidecar as an EPUB clip identity and
 XPointers, never as screen coordinates or a reader annotation. If the EPUB,
-target clip, or saved XPointer no longer matches, KoReadalong discards the
+target clip, or saved XPointer no longer matches, KOReadalong discards the
 stale state and **Resume** falls back to the current-position start path.
 After narration reaches the end, **Start over** remains available for replay.
 
@@ -337,7 +337,7 @@ through the table of contents, search results, or a link suspends automatic
 following without stopping audio, timing, or chapter handoff. The panel labels
 this state **Playing · browsing** or **Paused · browsing** and retains the
 latest valid narrated XPointer range. Choose **Return to narration** in the
-panel, or assign **Reader → KoReadalong: return to narration** in Gesture
+panel, or assign **Reader → KOReadalong: return to narration** in Gesture
 manager/Dispatcher, to jump back once and resume Following. Browsing is a
 transient session state and is not restored when the book is reopened.
 
@@ -354,13 +354,13 @@ The panel can be opened with any gesture supported by KOReader:
 
 1. Open **Gesture manager**.
 2. Choose a gesture, for example **Long-press on corner → Bottom right**.
-3. Select **Reader → KoReadalong: show playback controls**.
+3. Select **Reader → KOReadalong: show playback controls**.
 
 The assignment is saved by KOReader. The action remains available in Gesture
 manager for all reader documents, but only opens the panel when the current
 book contains usable Media Overlays.
 
-The **KoReadalong: return to narration** action is likewise available for
+The **KOReadalong: return to narration** action is likewise available for
 reader gesture/Dispatcher assignment. It is disabled when no active narrated
 range is available and does not create a persistent annotation.
 

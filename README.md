@@ -1,7 +1,7 @@
-# KoReadalong
+# KOReadalong
 
 Read and listen to a book together in [KOReader](https://github.com/koreader/koreader).
-KoReadalong plays the audio embedded in a narrated EPUB and underlines the text
+KOReadalong plays the audio embedded in a narrated EPUB and underlines the text
 being read, using the book's own timing rather than a separate audiobook or
 text-to-speech service.
 
@@ -20,7 +20,7 @@ For example: open a narrated EPUB → **Read along** → **Start here**. The act
 sentence or paragraph is underlined. Turn a page to browse without stopping
 audio, then choose **Return to narration** to follow again.
 
-> **Beta preparation:** no KoReadalong prerelease has been published yet.
+> **Beta preparation:** no KOReadalong prerelease has been published yet.
 > Kindle testers should read the [Kindle setup and limitations](docs/kindle.md)
 > before installing.
 
@@ -28,7 +28,7 @@ audio, then choose **Return to narration** to follow again.
 It aligns a DRM-free EPUB with its matching audiobook and produces an EPUB with
 embedded narration and timing. Follow Storyteller's [readaloud creation
 guide](https://storyteller-platform.dev/docs/managing/aligning), download the
-resulting EPUB, and open it in KOReader with KoReadalong. KoReadalong plays these
+resulting EPUB, and open it in KOReader with KOReadalong. KOReadalong plays these
 aligned books; it does not align a separate ebook and audiobook itself.
 
 ## Contents
@@ -67,7 +67,7 @@ aligned books; it does not align a separate ebook and audiobook itself.
 
 Use the [Kindle tester guide](docs/kindle.md). You need a jailbroken Kindle,
 KOReader, KinAMP with its libraries and enabled KOReader plugin, and connected
-Bluetooth audio. **The KoReadalong ZIP does not install KinAMP or change the
+Bluetooth audio. **The KOReadalong ZIP does not install KinAMP or change the
 Kindle's Bluetooth policy.**
 
 ## Start listening
@@ -80,7 +80,7 @@ Kindle's Bluetooth policy.**
    narration and resets playback to the first clip. Opening a book never starts
    audio automatically.
 
-To reopen controls quickly, assign **Reader → KoReadalong: show playback
+To reopen controls quickly, assign **Reader → KOReadalong: show playback
 controls** in KOReader's Gesture manager. See the [reference guide](docs/guide.md#use)
 for all controls, resume behavior, progress displays, and gestures.
 
@@ -119,19 +119,19 @@ Maintainers can follow the [prerelease checklist](docs/releasing.md).
 
 ## Credits
 
-KoReadalong is made possible by these projects and their contributors:
+KOReadalong is made possible by these projects and their contributors:
 
 - [Storyteller](https://storyteller-platform.dev/) creates the aligned readaloud
   EPUBs that bring ebook text and audiobook narration together.
 - [KinAMP](https://github.com/kbarni/KinAMP) provides the Kindle audio player,
-  Bluetooth setup, and playback interface used by KoReadalong's Kindle backend.
+  Bluetooth setup, and playback interface used by KOReadalong's Kindle backend.
   The [experimental fork](https://github.com/pricci1/KinAMP-fork) builds on that work
   to add Opus-in-MP4 and playback-speed support.
 - [KOReader](https://github.com/koreader/koreader) provides the reader, plugin
-  framework, text rendering, and device support that KoReadalong integrates with.
+  framework, text rendering, and device support that KOReadalong integrates with.
 
 ## License
 
-KoReadalong is licensed under the [GNU Affero General Public License, version 3](LICENSE),
+KOReadalong is licensed under the [GNU Affero General Public License, version 3](LICENSE),
 the same license used by KOReader. Storyteller and KinAMP are separate projects
 with their own licenses.

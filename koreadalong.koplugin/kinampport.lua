@@ -7,7 +7,7 @@ local C = ffi.C
 
 -- Clean-room interoperability with the text protocol of the separately
 -- installed GPLv3+ KinAMP daemon: https://github.com/kbarni/KinAMP.
--- KoReadalong does not bundle or derive code from KinAMP.  Kindle/Linux is
+-- KOReadalong does not bundle or derive code from KinAMP.  Kindle/Linux is
 -- assumed here so one <= PIPE_BUF (4096-byte) FIFO write is atomic.
 pcall(ffi.cdef, [[
 typedef void (*koreadalong_sighandler_t)(int);

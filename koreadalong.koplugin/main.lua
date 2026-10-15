@@ -24,7 +24,7 @@ local RENDER_SUPPRESSION_SECONDS = 0.75
 
 local KINAMP_BUSY_HELP = _([[KinAMP is busy.
 
-Another client is playing or paused. KoReadalong has left it untouched. Stop that playback when you are ready, then press Start again.]])
+Another client is playing or paused. KOReadalong has left it untouched. Stop that playback when you are ready, then press Start again.]])
 
 local KINAMP_HELP = _([[KinAMP setup and help
 
@@ -32,7 +32,7 @@ Install and enable the official KinAMP plugin and player separately, then restar
 
 Read along starts KinAMP automatically. Closing a book stops narration; reopening never starts audio.
 
-Bluetooth setup opens KinAMP’s existing settings. KoReadalong leaves the radio and other clients alone.
+Bluetooth setup opens KinAMP’s existing settings. KOReadalong leaves the radio and other clients alone.
 
 Opus-in-MP4: experimental PW6-tested source branch, not a binary release:
 https://github.com/pricci1/KinAMP-fork/tree/prototype/opus-mp4
@@ -40,27 +40,27 @@ https://github.com/pricci1/KinAMP-fork/tree/prototype/opus-mp4
 Official KinAMP documentation:
 https://github.com/kbarni/KinAMP/blob/master/README.md]])
 
-local KoReadalong = WidgetContainer:extend({
+local KOReadalong = WidgetContainer:extend({
     name = "koreadalong",
     is_doc_only = true,
 })
 
-function KoReadalong:onDispatcherRegisterActions()
+function KOReadalong:onDispatcherRegisterActions()
     Dispatcher:registerAction("koreadalong_show_controls", {
         category = "none",
         event = "ShowReadAlongControls",
-        title = _("KoReadalong: show playback controls"),
+        title = _("KOReadalong: show playback controls"),
         reader = true,
     })
     Dispatcher:registerAction("koreadalong_return_to_narration", {
         category = "none",
         event = "ReturnToNarration",
-        title = _("KoReadalong: return to narration"),
+        title = _("KOReadalong: return to narration"),
         reader = true,
     })
 end
 
-function KoReadalong:init()
+function KOReadalong:init()
     self.follow_state = FOLLOWING
     self.input_sequence = 0
     self.input_pending = false
@@ -113,7 +113,7 @@ local function pointer_visible(self, pointer)
     return ok and visible == true
 end
 
-function KoReadalong:_cancel_navigation_guard()
+function KOReadalong:_cancel_navigation_guard()
     if self.expected_navigation_action and type(UIManager.unschedule) == "function" then
         UIManager:unschedule(self.expected_navigation_action)
     end
@@ -121,7 +121,7 @@ function KoReadalong:_cancel_navigation_guard()
     self.expected_navigation_action = nil
 end
 
-function KoReadalong:_cancel_navigation_candidate()
+function KOReadalong:_cancel_navigation_candidate()
     if self.navigation_candidate_action and type(UIManager.unschedule) == "function" then
         UIManager:unschedule(self.navigation_candidate_action)
     end
@@ -129,7 +129,7 @@ function KoReadalong:_cancel_navigation_candidate()
     self.navigation_candidate_action = nil
 end
 
-function KoReadalong:_clear_render_suppression()
+function KOReadalong:_clear_render_suppression()
     if self.render_action and type(UIManager.unschedule) == "function" then
         UIManager:unschedule(self.render_action)
     end
@@ -137,7 +137,7 @@ function KoReadalong:_clear_render_suppression()
     self.rendering = nil
 end
 
-function KoReadalong:_set_follow_state(state)
+function KOReadalong:_set_follow_state(state)
     if self.follow_state == state then
         return
     end
@@ -148,7 +148,7 @@ function KoReadalong:_set_follow_state(state)
     end
 end
 
-function KoReadalong:_notify_return_availability_changed(was_available)
+function KOReadalong:_notify_return_availability_changed(was_available)
     if was_available == self:canReturnToNarration() then
         return
     end
@@ -158,7 +158,7 @@ function KoReadalong:_notify_return_availability_changed(was_available)
     end
 end
 
-function KoReadalong:_reset_navigation()
+function KOReadalong:_reset_navigation()
     self:_cancel_navigation_guard()
     self:_cancel_navigation_candidate()
     self:_clear_render_suppression()
@@ -172,7 +172,7 @@ function KoReadalong:_reset_navigation()
     self:_set_follow_state(FOLLOWING)
 end
 
-function KoReadalong:_begin_following()
+function KOReadalong:_begin_following()
     self:_cancel_navigation_guard()
     self:_cancel_navigation_candidate()
     self:_clear_render_suppression()
@@ -185,7 +185,7 @@ function KoReadalong:_begin_following()
     self:_set_follow_state(FOLLOWING)
 end
 
-function KoReadalong:_set_browsing()
+function KOReadalong:_set_browsing()
     self:_cancel_navigation_candidate()
     self:_cancel_navigation_guard()
     self.input_pending = false
@@ -196,7 +196,7 @@ function KoReadalong:_set_browsing()
     self:_set_follow_state(BROWSING)
 end
 
-function KoReadalong:_schedule_input_expiry(sequence)
+function KOReadalong:_schedule_input_expiry(sequence)
     if self.input_expiry_action and type(UIManager.unschedule) == "function" then
         UIManager:unschedule(self.input_expiry_action)
     end
@@ -211,13 +211,13 @@ function KoReadalong:_schedule_input_expiry(sequence)
     end
 end
 
-function KoReadalong:_onInputFrame()
+function KOReadalong:_onInputFrame()
     self.input_sequence = self.input_sequence + 1
     self.input_pending = true
     self:_schedule_input_expiry(self.input_sequence)
 end
 
-function KoReadalong:_register_input_hook()
+function KOReadalong:_register_input_hook()
     local event_hook = UIManager.event_hook
     if not event_hook or type(event_hook.register) ~= "function" then
         return
@@ -228,7 +228,7 @@ function KoReadalong:_register_input_hook()
     event_hook:register("InputEvent", self.input_hook)
 end
 
-function KoReadalong:_unregister_input_hook()
+function KOReadalong:_unregister_input_hook()
     local event_hook = UIManager.event_hook
     if self.input_hook and event_hook and type(event_hook.unregister) == "function" then
         event_hook:unregister("InputEvent", self.input_hook)
@@ -236,7 +236,7 @@ function KoReadalong:_unregister_input_hook()
     self.input_hook = nil
 end
 
-function KoReadalong:_expect_navigation(pointer)
+function KOReadalong:_expect_navigation(pointer)
     self:_cancel_navigation_guard()
     self.navigation_serial = self.navigation_serial + 1
     local guard = {
@@ -287,7 +287,7 @@ local function close_enough(left, right)
         and math.abs(left - right) <= 1
 end
 
-function KoReadalong:_expected_navigation_matches(kind, value)
+function KOReadalong:_expected_navigation_matches(kind, value)
     local guard = self.expected_navigation
     if not guard then
         return false
@@ -315,7 +315,7 @@ function KoReadalong:_expected_navigation_matches(kind, value)
     return true
 end
 
-function KoReadalong:_schedule_browse_candidate(logical_changed, pointer)
+function KOReadalong:_schedule_browse_candidate(logical_changed, pointer)
     if self.follow_state ~= FOLLOWING or not active_narration(self) then
         return
     end
@@ -356,7 +356,7 @@ function KoReadalong:_schedule_browse_candidate(logical_changed, pointer)
     end
 end
 
-function KoReadalong:_observe_position(kind, value)
+function KOReadalong:_observe_position(kind, value)
     local expected = self:_expected_navigation_matches(kind, value)
     local pointer = current_xpointer(self)
     local logical_changed = pointer ~= self.last_xpointer
@@ -366,7 +366,7 @@ function KoReadalong:_observe_position(kind, value)
     end
 end
 
-function KoReadalong:_mark_rendering()
+function KOReadalong:_mark_rendering()
     self:_cancel_navigation_candidate()
     self.render_serial = self.render_serial + 1
     local serial = self.render_serial
@@ -388,7 +388,7 @@ function KoReadalong:_mark_rendering()
     end
 end
 
-function KoReadalong:_follow_range(pos0, pos1)
+function KOReadalong:_follow_range(pos0, pos1)
     if self.follow_state ~= FOLLOWING or not active_narration(self) then
         return
     end
@@ -400,7 +400,7 @@ function KoReadalong:_follow_range(pos0, pos1)
     refresh_overlay(self)
 end
 
-function KoReadalong:_latest_range()
+function KOReadalong:_latest_range()
     if type(self.latest_range) == "table"
         and valid_xpointer(self.latest_range.pos0)
         and valid_xpointer(self.latest_range.pos1) then
@@ -423,13 +423,13 @@ function KoReadalong:_latest_range()
     return nil
 end
 
-function KoReadalong:canReturnToNarration()
+function KOReadalong:canReturnToNarration()
     return self.follow_state == BROWSING
         and active_narration(self)
         and self:_latest_range() ~= nil
 end
 
-function KoReadalong:toggleFollowing()
+function KOReadalong:toggleFollowing()
     if not active_narration(self) then
         return nil, _("Narration is not active")
     end
@@ -446,7 +446,7 @@ function KoReadalong:toggleFollowing()
     return true
 end
 
-function KoReadalong:returnToNarration()
+function KOReadalong:returnToNarration()
     if not active_narration(self) then
         return nil, _("Narration is not active")
     end
@@ -462,7 +462,7 @@ function KoReadalong:returnToNarration()
     return true
 end
 
-function KoReadalong:onReturnToNarration()
+function KOReadalong:onReturnToNarration()
     local ok, error_message = self:returnToNarration()
     if not ok and error_message then
         self:_show_error(error_message)
@@ -497,7 +497,7 @@ local function new_audio_adapter()
     return require("mpvaudio").new{ timer = UIManager }
 end
 
-function KoReadalong:_show_error(error_message)
+function KOReadalong:_show_error(error_message)
     local message = tostring(error_message)
     if Device:isKindle() then
         if message == KINAMP_BUSY_ERROR then
@@ -518,7 +518,7 @@ Open Bluetooth setup to connect your audio device, then press Start again. Pair 
     })
 end
 
-function KoReadalong:_show_kinamp_help(message)
+function KOReadalong:_show_kinamp_help(message)
     UIManager:show(require("ui/widget/confirmbox"):new{
         text = message or KINAMP_HELP,
         ok_text = _("Bluetooth setup"),
@@ -534,11 +534,11 @@ function KoReadalong:_show_kinamp_help(message)
     })
 end
 
-function KoReadalong:_read_document_file(path)
+function KOReadalong:_read_document_file(path)
     return self.document:getDocumentFileContent(path)
 end
 
-function KoReadalong:_show_playback_controls()
+function KOReadalong:_show_playback_controls()
     if self.playback_dialog then
         return
     end
@@ -573,7 +573,7 @@ function KoReadalong:_show_playback_controls()
     UIManager:show(self.playback_dialog)
 end
 
-function KoReadalong:onShowReadAlongControls()
+function KOReadalong:onShowReadAlongControls()
     if not self.coordinator then
         return false
     end
@@ -581,7 +581,7 @@ function KoReadalong:onShowReadAlongControls()
     return true
 end
 
-function KoReadalong:_register_highlight_action()
+function KOReadalong:_register_highlight_action()
     local highlight = self.ui and self.ui.highlight
     if not highlight
         or type(highlight.addToHighlightDialog) ~= "function" then
@@ -645,7 +645,7 @@ function KoReadalong:_register_highlight_action()
     end)
 end
 
-function KoReadalong:onReaderReady()
+function KOReadalong:onReaderReady()
     if self.probed then
         return
     end
@@ -674,7 +674,7 @@ function KoReadalong:onReaderReady()
         end
     end
     if skipped_clips and skipped_clips > 0 then
-        local message = string.format(_([[KoReadalong skipped narration clips with an end time at or before their start time.
+        local message = string.format(_([[KOReadalong skipped narration clips with an end time at or before their start time.
 Skipped clips: %d.]]), skipped_clips)
         if timeline then
             message = message .. "\n\n" .. _("The remaining narration is available through Read along. Some text will not be synchronized.")
@@ -753,7 +753,7 @@ Skipped clips: %d.]]), skipped_clips)
     self.ui.menu:registerToMainMenu(self)
 end
 
-function KoReadalong:addToMainMenu(menu_items)
+function KOReadalong:addToMainMenu(menu_items)
     menu_items.read_along = {
         text = _("Read along"),
         sorting_hint = "more_tools",
@@ -772,54 +772,54 @@ function KoReadalong:addToMainMenu(menu_items)
     end
 end
 
-function KoReadalong:onPageUpdate(new_page)
+function KOReadalong:onPageUpdate(new_page)
     self:_observe_position("page", new_page)
     refresh_overlay(self)
 end
 
-function KoReadalong:onPosUpdate(new_pos, new_page)
+function KOReadalong:onPosUpdate(new_pos, new_page)
     self:_observe_position("position", new_pos)
     refresh_overlay(self)
 end
 
-function KoReadalong:onDocumentRerendered()
+function KOReadalong:onDocumentRerendered()
     self:_mark_rendering()
     refresh_overlay(self)
 end
 
-function KoReadalong:onSetDimensions()
+function KOReadalong:onSetDimensions()
     self:_mark_rendering()
     refresh_overlay(self)
 end
 
-function KoReadalong:onSetRotationMode()
+function KOReadalong:onSetRotationMode()
     self:_mark_rendering()
     refresh_overlay(self)
 end
 
-function KoReadalong:onRotationUpdate()
+function KOReadalong:onRotationUpdate()
     self:_mark_rendering()
     refresh_overlay(self)
 end
 
-function KoReadalong:onZoomUpdate()
+function KOReadalong:onZoomUpdate()
     self:_mark_rendering()
     refresh_overlay(self)
 end
 
-function KoReadalong:onFontSizeUpdate()
+function KOReadalong:onFontSizeUpdate()
     self:_mark_rendering()
     refresh_overlay(self)
 end
 
-function KoReadalong:onDocumentPartiallyRerendered()
+function KOReadalong:onDocumentPartiallyRerendered()
     self:_mark_rendering()
     if self.overlay then
         self.overlay:invalidate()
     end
 end
 
-function KoReadalong:onCloseDocument()
+function KOReadalong:onCloseDocument()
     self:_unregister_input_hook()
     self:_reset_navigation()
     if self.playback_dialog then
@@ -833,17 +833,17 @@ function KoReadalong:onCloseDocument()
     end
 end
 
-function KoReadalong:onCloseWidget()
+function KOReadalong:onCloseWidget()
     self:onCloseDocument()
 end
 
-function KoReadalong:onExit()
+function KOReadalong:onExit()
     -- KinAMP can quit paused audio during this broadcast, before the reader's
     -- deferred CloseDocument event. Cancel our active callbacks now.
     self:onCloseDocument()
 end
 
 -- Power-off/reboot announces Close instead of Exit.
-KoReadalong.onClose = KoReadalong.onExit
+KOReadalong.onClose = KOReadalong.onExit
 
-return KoReadalong
+return KOReadalong

@@ -1,4 +1,4 @@
-# KoReadalong architecture
+# KOReadalong architecture
 
 ## MVP outcome
 
@@ -347,7 +347,7 @@ stock seek-to-resume workaround must not be used with this protocol.
 `pos_ms` is converted to original-media seconds only for `speed-v1`; it is a
 clock/epoch estimate, not a Bluetooth playhead. Sonic pitch-preserving PCM
 processing and old-rate audio draining are owned by the external player;
-KoReadalong never predicts positions using the latest requested rate. The UI
+KOReadalong never predicts positions using the latest requested rate. The UI
 shows the per-book requested speed, not the rate already reaching the listener.
 These additions have host synthetic/real-daemon, supplied-runtime ARM/QEMU, and
 bounded native PW6 coverage described in the [reference guide](guide.md#playback-speed-prototype). None establishes exact
@@ -369,7 +369,7 @@ never sends `quit`, launches or kills a daemon, or manages Bluetooth. This
 initial integration assumes Kindle/Linux `PIPE_BUF=4096` atomic writes. KinAMP
 is an external GPLv3+ dependency; protocol interoperability is based on the
 public [KinAMP project](https://github.com/kbarni/KinAMP), and no KinAMP source
-is bundled or copied into KoReadalong.
+is bundled or copied into KOReadalong.
 
 `kinampservice.lua` supplies the Kindle adapter's native startup boundary. It
 reuses the enabled official plugin's `kinamp_config.bin_folder` discovery and

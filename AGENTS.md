@@ -1,6 +1,6 @@
-# KoReadalong development guidance
+# KOReadalong development guidance
 
-KoReadalong is a KOReader plugin for EPUB 3 Media Overlays. Keep the core platform-neutral and put desktop/Kindle audio behavior behind explicit adapters.
+KOReadalong is a KOReader plugin for EPUB 3 Media Overlays. Keep the core platform-neutral and put desktop/Kindle audio behavior behind explicit adapters.
 
 ## Commands
 

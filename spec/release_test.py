@@ -18,7 +18,7 @@ class ReleaseTest(unittest.TestCase):
         self.root = Path(self.temporary.name)
         sources = {
             "koreadalong.koplugin/main.lua": "return {}\n",
-            "koreadalong.koplugin/_meta.lua": "return {fullname='KoReadalong'}\n",
+            "koreadalong.koplugin/_meta.lua": "return {fullname='KOReadalong'}\n",
             "koreadalong.koplugin/audio.lua": "return {speed=1.7}\n",
             "README.md": "# Installation\n",
             "docs/kindle.md": "# Kindle\n",

@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Read-only KinAMP/KoReadalong diagnostics for constrained Kindle shells.
+# Read-only KinAMP/KOReadalong diagnostics for constrained Kindle shells.
 # This script deliberately does not open the command FIFO, send a command,
 # execute a KinAMP launcher/binary, signal a process, or modify the filesystem.
 # shellcheck disable=SC2016
@@ -81,7 +81,7 @@ usage() {
     cat <<EOF
 Usage: $PROGRAM [OPTIONS]
 
-Read-only KinAMP and KoReadalong diagnostics. The script never starts,
+Read-only KinAMP and KOReadalong diagnostics. The script never starts,
 stops, signals, or sends commands to KinAMP/KOReader, never executes the
 KinAMP launcher or binary, and never creates or removes files.
 
@@ -1241,7 +1241,7 @@ next_step() {
     elif [ "$status_oversized" -eq 1 ] || [ "$status_malformed" -eq 1 ]; then
         printf '%s\n' 'NEXT: inspect the KinAMP status publisher and its bounded key=value output; do not use this diagnostic to rewrite the status file.'
     elif [ "$status_busy" -eq 1 ]; then
-        printf '%s\n' 'NEXT: leave KinAMP stopped/idle, then retry KoReadalong Read along.'
+        printf '%s\n' 'NEXT: leave KinAMP stopped/idle, then retry KOReadalong Read along.'
     elif [ "$fifo_problem" -eq 1 ] || [ "$status_problem" -eq 1 ] || [ "$runtime_problem" -eq 1 ]; then
         printf '%s\n' 'NEXT: verify KinAMP is manually running with the same KINAMP_RUNTIME_DIR and confirm kinamp_cmd/kinamp_status ownership; this script did not start or change it.'
     elif [ "$pid_problem" -eq 1 ]; then
@@ -1255,7 +1255,7 @@ next_step() {
     elif [ "$package_checks" -eq 0 ]; then
         printf '%s\n' 'NEXT: runtime checks are ready; rerun with --kinamp-dir PATH to include launcher, binary, library, and package-version checks.'
     else
-        printf '%s\n' 'NEXT: KinAMP appears idle; retry KoReadalong Read along and attach this report if playback still fails.'
+        printf '%s\n' 'NEXT: KinAMP appears idle; retry KOReadalong Read along and attach this report if playback still fails.'
     fi
 }
 
@@ -1472,7 +1472,7 @@ AWK_CMD=
 DD_CMD=
 HEAD_CMD=
 WC_AVAILABLE=0
-printf '%s\n' 'KoReadalong KinAMP diagnostic (read-only)'
+printf '%s\n' 'KOReadalong KinAMP diagnostic (read-only)'
 check_optional_tools
 check_architecture
 

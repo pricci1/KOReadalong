@@ -1,6 +1,6 @@
 # Kindle beta tester guide
 
-KoReadalong's Kindle support is experimental. The tested configuration is
+KOReadalong's Kindle support is experimental. The tested configuration is
 **Kindle Paperwhite 6, firmware 5.19.3.0.1, KOReader v2026.07.1**, with KinAMP's
 native Bluetooth output. Other models and firmware are unverified; a player
 binary built for this configuration is not a universal Kindle download.
@@ -9,11 +9,11 @@ binary built for this configuration is not a universal Kindle download.
 
 - A jailbroken Kindle with KOReader installed.
 - [KinAMP](https://github.com/kbarni/KinAMP): its player, required libraries,
-  launchers, and enabled KOReader plugin. KoReadalong does not replace these.
+  launchers, and enabled KOReader plugin. KOReadalong does not replace these.
 - Connected Bluetooth headphones or a speaker.
 - An EPUB containing embedded audio and EPUB 3 Media Overlays. Separate EPUB
   and audiobook files are not supported.
-- The versioned KoReadalong ZIP supplied by the prerelease organizer. The same
+- The versioned KOReadalong ZIP supplied by the prerelease organizer. The same
   plugin ZIP is used for Linux and Kindle; audio players are separate.
 
 > **Before inviting testers:** the organizer must provide the exact player
@@ -32,26 +32,26 @@ The [speed prototype](https://github.com/pricci1/KinAMP-fork/tree/080aed2e014433
 was tested on the PW6 configuration above, including listening at 1× and 1.5×.
 The tested installation replaced only `KinAMP-minimal`, keeping the official
 plugin and libraries. Do not substitute a desktop binary or an arbitrary build.
-The player advertises speed support; KoReadalong hides those controls on stock
+The player advertises speed support; KOReadalong hides those controls on stock
 KinAMP and unsupported tracks.
 
 Changing an Opus file's extension or installing a GStreamer codec does not add
-Opus-in-MP4 support to stock KinAMP. KoReadalong does not transcode books.
+Opus-in-MP4 support to stock KinAMP. KOReadalong does not transcode books.
 
-## Install or update KoReadalong
+## Install or update KOReadalong
 
 1. Stop narration and exit KOReader before changing files. If already installed,
    back up `koreader/plugins/koreadalong.koplugin` outside the plugins directory.
    Preserve your KOReader settings and book sidecars.
-2. Extract the KoReadalong ZIP on your computer. Copy only its
+2. Extract the KOReadalong ZIP on your computer. Copy only its
    `koreadalong.koplugin` directory into the Kindle's `koreader/plugins`
    directory. Replace the old plugin directory rather than merging versions.
 3. Confirm that the resulting path is
    `koreader/plugins/koreadalong.koplugin/main.lua`, without an extra nested
    archive directory. Safely eject the Kindle and start KOReader.
 4. Connect audio using **KinAMP setup and help → Bluetooth setup**. Pairing and
-   connection remain user actions; KoReadalong does not change the radio.
-5. Open a narrated EPUB and choose **Read along → Start here**. KoReadalong
+   connection remain user actions; KOReadalong does not change the radio.
+5. Open a narrated EPUB and choose **Read along → Start here**. KOReadalong
    starts an absent KinAMP service automatically. You do not need to start a
    player manually for each book.
 
@@ -67,7 +67,7 @@ the demonstrated fix.
 
 There is a separate [experimental Bluetooth guard](https://github.com/pricci1/KinAMP-fork/blob/7a3dbf7f71d62cd50ea8a52cff9d3e484cecfb06/BT_GUARD.md).
 It is tied to exact firmware and player identities and is **not included or
-enabled by the KoReadalong ZIP**. It changes the running Bluetooth-service
+enabled by the KOReadalong ZIP**. It changes the running Bluetooth-service
 policy, so only use the organizer's exact compatible package and its documented
 enable, disable, recovery, and uninstall procedures. Do not bypass its checks.
 
@@ -110,7 +110,7 @@ session to the first clip; pause or close the book to retain your listening plac
 
 ## Report a problem
 
-Include the KoReadalong version from the archive's `RELEASE.json`, Kindle model
+Include the KOReadalong version from the archive's `RELEASE.json`, Kindle model
 and firmware, KOReader version, exact player package, guard state, elapsed
 listening time, and reproduction steps. Say whether audio continued after a
 crash and whether a second attempt behaved differently.

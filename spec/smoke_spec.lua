@@ -1,4 +1,4 @@
-describe("KoReadalong development environment", function()
+describe("KOReadalong development environment", function()
     it("runs LuaJIT-compatible Busted tests", function()
         assert.is_true(jit ~= nil)
     end)

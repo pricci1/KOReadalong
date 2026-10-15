@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec 9>"$repo_root/.cache/koreadalong-smoke.lock"
 if ! flock -n 9; then
-    printf 'another KoReadalong smoke integration is already running\n' >&2
+    printf 'another KOReadalong smoke integration is already running\n' >&2
     exit 1
 fi
 
@@ -55,7 +55,7 @@ files = {
 """,
     "book/package.opf": """<?xml version="1.0" encoding="UTF-8"?>
 <package version="3.0" xmlns="http://www.idpf.org/2007/opf">
-  <metadata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">KoReadalong smoke</dc:title></metadata>
+  <metadata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">KOReadalong smoke</dc:title></metadata>
   <manifest>
     <item id="first" href="first.xhtml" media-type="application/xhtml+xml" media-overlay="first-overlay"/>
     <item id="first-overlay" href="first.smil" media-type="application/smil+xml"/>

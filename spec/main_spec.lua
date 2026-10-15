@@ -1,6 +1,6 @@
 package.path = "./koreadalong.koplugin/?.lua;" .. package.path
 
-describe("KoReadalong lifecycle and menu", function()
+describe("KOReadalong lifecycle and menu", function()
     local plugin
     local overlay
     local highlight
@@ -343,8 +343,8 @@ describe("KoReadalong lifecycle and menu", function()
             }
         end
 
-        local KoReadalong = require("main")
-        plugin = KoReadalong:new{
+        local KOReadalong = require("main")
+        plugin = KOReadalong:new{
             dialog = "dialog",
             document = {
                 provider = "crengine",
@@ -460,13 +460,13 @@ describe("KoReadalong lifecycle and menu", function()
         assert.are.same({
             category = "none",
             event = "ShowReadAlongControls",
-            title = "KoReadalong: show playback controls",
+            title = "KOReadalong: show playback controls",
             reader = true,
         }, dispatcher.actions.koreadalong_show_controls)
         assert.are.same({
             category = "none",
             event = "ReturnToNarration",
-            title = "KoReadalong: return to narration",
+            title = "KOReadalong: return to narration",
             reader = true,
         }, dispatcher.actions.koreadalong_return_to_narration)
         assert.is_false(plugin:onShowReadAlongControls())

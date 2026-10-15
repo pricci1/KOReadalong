@@ -352,11 +352,11 @@ function KindleAudio:_log_commands(commands)
             )
         end
         if #arguments == 0 then
-            self:_log("info", "KoReadalong KindleAudio command", name)
+            self:_log("info", "KOReadalong KindleAudio command", name)
         else
             self:_log(
                 "info",
-                "KoReadalong KindleAudio command",
+                "KOReadalong KindleAudio command",
                 name,
                 table.concat(arguments, " ")
             )
@@ -370,7 +370,7 @@ function KindleAudio:_log_publication(token)
     end
     self:_log(
         "info",
-        "KoReadalong KindleAudio publication",
+        "KOReadalong KindleAudio publication",
         self.last_logged_token and "changed" or "initial",
         tostring(token)
     )
@@ -388,7 +388,7 @@ function KindleAudio:_log_failure(message, terminal)
     self.last_logged_error_terminal = terminal
     self:_log(
         terminal and "err" or "warn",
-        "KoReadalong KindleAudio failure",
+        "KOReadalong KindleAudio failure",
         terminal and "terminal" or "recoverable",
         redact_path(message)
     )
@@ -402,7 +402,7 @@ function KindleAudio:_log_cleanup_failure(message)
     self.last_logged_cleanup_error = message
     self:_log(
         "warn",
-        "KoReadalong KindleAudio cleanup failure",
+        "KOReadalong KindleAudio cleanup failure",
         redact_path(message)
     )
 end
@@ -421,7 +421,7 @@ function KindleAudio:_set_state(state)
     if previous ~= state then
         self:_log(
             "info",
-            "KoReadalong KindleAudio state",
+            "KOReadalong KindleAudio state",
             previous,
             "->",
             state
@@ -539,7 +539,7 @@ function KindleAudio:_create_playlist()
     end
     self.playlist_path = path
     self.playlist_owned = true
-    self:_log("info", "KoReadalong KindleAudio playlist", "created")
+    self:_log("info", "KOReadalong KindleAudio playlist", "created")
     return true
 end
 
@@ -566,7 +566,7 @@ function KindleAudio:_remove_playlist()
     end
     self.playlist_path = nil
     self.playlist_owned = false
-    self:_log("info", "KoReadalong KindleAudio playlist", "removed")
+    self:_log("info", "KOReadalong KindleAudio playlist", "removed")
     return true
 end
 
@@ -1195,7 +1195,7 @@ function KindleAudio:_close_port()
     end
     self.close_finished = true
     self.poll_scheduled = false
-    self:_log("info", "KoReadalong KindleAudio port", "closed")
+    self:_log("info", "KOReadalong KindleAudio port", "closed")
     return true
 end
 

@@ -70,5 +70,5 @@ jobs:
           result, and tester contact instructions. Finish docs/releasing.md.
           EOF
           gh release create "$RELEASE_TAG" dist/* --verify-tag --draft \
-            --prerelease --latest=false --title "KoReadalong $RELEASE_TAG" \
+            --prerelease --latest=false --title "KOReadalong $RELEASE_TAG" \
             --notes-file "$RUNNER_TEMP/notes.md"

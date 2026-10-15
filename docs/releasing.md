@@ -7,8 +7,8 @@ component, firmware libraries, private settings, or a Kindle sysroot.
 
 ## Before publication
 
-1. Configure the GitHub repository that will host KoReadalong source and prereleases.
-2. Verify that the package contains KoReadalong's `LICENSE`: GNU Affero General
+1. Configure the GitHub repository that will host KOReadalong source and prereleases.
+2. Verify that the package contains KOReadalong's `LICENSE`: GNU Affero General
    Public License, version 3, matching KOReader. The GitHub release workflow
    refuses to create a draft without a nonempty license file. Companion players
    retain their own licenses and distribution obligations.

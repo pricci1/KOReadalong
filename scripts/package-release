@@ -41,7 +41,7 @@ def main():
         "version": args.version,
         "source_commit": commit,
         "source_modified": modified,
-        "includes": "KoReadalong plugin only; audio players and Bluetooth guard are separate",
+        "includes": "KOReadalong plugin only; audio players and Bluetooth guard are separate",
     }, indent=2) + "\n"
 
     entries = {path.relative_to(root).as_posix(): path.read_bytes() for path in files}

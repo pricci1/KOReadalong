@@ -579,15 +579,15 @@ describe("KinAMP Kindle audio adapter", function()
             logger = make_logger(),
         }
         assert.is_true(audio:open(AUDIO_PATH, { position = 1.4 }))
-        assert.are.equal(1, log_count(logger, "KoReadalong KindleAudio state"))
-        assert.are.equal(2, log_count(logger, "KoReadalong KindleAudio publication"))
+        assert.are.equal(1, log_count(logger, "KOReadalong KindleAudio state"))
+        assert.are.equal(2, log_count(logger, "KOReadalong KindleAudio publication"))
         assert.is_true(log_has_argument(
             logger,
-            "KoReadalong KindleAudio command",
+            "KOReadalong KindleAudio command",
             "load"
         ))
-        assert.is_true(log_has_argument(logger, "KoReadalong KindleAudio command", "<playlist>"))
-        assert.is_true(log_has_argument(logger, "KoReadalong KindleAudio command", "1"))
+        assert.is_true(log_has_argument(logger, "KOReadalong KindleAudio command", "<playlist>"))
+        assert.is_true(log_has_argument(logger, "KOReadalong KindleAudio command", "1"))
         assert.is_false(log_text(logger):find(AUDIO_PATH, 1, true) ~= nil)
         assert.is_false(log_text(logger):find(writer.created[1].path, 1, true) ~= nil)
 
@@ -597,8 +597,8 @@ describe("KinAMP Kindle audio adapter", function()
             token = "a1",
         }
         tick(timer)
-        assert.are.equal(3, log_count(logger, "KoReadalong KindleAudio publication"))
-        assert.are.equal(2, log_count(logger, "KoReadalong KindleAudio state"))
+        assert.are.equal(3, log_count(logger, "KOReadalong KindleAudio publication"))
+        assert.are.equal(2, log_count(logger, "KOReadalong KindleAudio state"))
 
         local before_routine_polls = #logger.entries
         for _, token in ipairs({ "poll-1", "poll-2", "poll-3" }) do
@@ -610,7 +610,7 @@ describe("KinAMP Kindle audio adapter", function()
             tick(timer)
         end
         assert.are.equal(before_routine_polls, #logger.entries)
-        assert.are.equal(3, log_count(logger, "KoReadalong KindleAudio publication"))
+        assert.are.equal(3, log_count(logger, "KOReadalong KindleAudio publication"))
 
         assert.is_true(audio:stop())
         port:queue{
@@ -627,10 +627,10 @@ describe("KinAMP Kindle audio adapter", function()
         }
         tick(timer)
         assert.is_true(#logger.entries > before_release)
-        assert.are.equal(4, log_count(logger, "KoReadalong KindleAudio publication"))
+        assert.are.equal(4, log_count(logger, "KOReadalong KindleAudio publication"))
         assert.is_true(log_has_argument(
             logger,
-            "KoReadalong KindleAudio publication",
+            "KOReadalong KindleAudio publication",
             "release-1"
         ))
     end)
@@ -644,18 +644,18 @@ describe("KinAMP Kindle audio adapter", function()
         assert.is_nil(audio:open(AUDIO_PATH))
         local failure_count = log_count(
             logger,
-            "KoReadalong KindleAudio failure"
+            "KOReadalong KindleAudio failure"
         )
-        local state_count = log_count(logger, "KoReadalong KindleAudio state")
+        local state_count = log_count(logger, "KOReadalong KindleAudio state")
         audio:_error("KinAMP daemon is not running; start KinAMP first")
         audio:_set_state(KindleAudio.STATES.ERROR)
         assert.are.equal(failure_count, log_count(
             logger,
-            "KoReadalong KindleAudio failure"
+            "KOReadalong KindleAudio failure"
         ))
         assert.are.equal(state_count, log_count(
             logger,
-            "KoReadalong KindleAudio state"
+            "KOReadalong KindleAudio state"
         ))
     end)
 
@@ -683,10 +683,10 @@ describe("KinAMP Kindle audio adapter", function()
             token = "a2",
         }
         tick(timer)
-        assert.are.equal(2, log_count(logger, "KoReadalong KindleAudio playlist"))
-        assert.is_true(log_has_argument(logger, "KoReadalong KindleAudio playlist", "removed"))
-        assert.are.equal(1, log_count(logger, "KoReadalong KindleAudio port"))
-        assert.is_true(log_has_argument(logger, "KoReadalong KindleAudio port", "closed"))
+        assert.are.equal(2, log_count(logger, "KOReadalong KindleAudio playlist"))
+        assert.is_true(log_has_argument(logger, "KOReadalong KindleAudio playlist", "removed"))
+        assert.are.equal(1, log_count(logger, "KOReadalong KindleAudio port"))
+        assert.is_true(log_has_argument(logger, "KOReadalong KindleAudio port", "closed"))
         assert.are.equal(1, #writer.removed)
     end)
 
@@ -1277,10 +1277,10 @@ describe("KinAMP Kindle audio adapter", function()
         assert.is_nil(opened)
         assert.matches("open write failed", error_message)
         assert.is_false(audio:getStatus().recoverable)
-        assert.are.equal(1, log_count(logger, "KoReadalong KindleAudio failure"))
+        assert.are.equal(1, log_count(logger, "KOReadalong KindleAudio failure"))
         assert.is_true(log_has_argument(
             logger,
-            "KoReadalong KindleAudio failure",
+            "KOReadalong KindleAudio failure",
             "terminal"
         ))
         assert.are.equal(1, #writer.created)
