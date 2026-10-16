@@ -8,6 +8,10 @@ log_step() {
     printf '\n==> %s\n' "$1"
 }
 
+log_step "Using repository-local Git hooks"
+# Do not inherit global hooks that inject a personal co-author email.
+git config --local core.hooksPath "$(git rev-parse --path-format=absolute --git-common-dir)/hooks"
+
 required_packages=(curl lua-busted lua-check luajit mpv shellcheck xauth xvfb xz-utils)
 missing_packages=()
 for package in "${required_packages[@]}"; do
