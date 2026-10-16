@@ -14,14 +14,14 @@ binary built for this configuration is not a universal Kindle download.
 - An EPUB containing embedded audio and EPUB 3 Media Overlays. Separate EPUB
   and audiobook files are not supported.
 - The versioned KOReadalong ZIP from the
-  [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.1). The same
+  [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.2). The same
   plugin ZIP is used for Linux and Kindle; audio players are separate.
 
 ## Choose your downloads
 
 | Asset | When to use it |
 | --- | --- |
-| `koreadalong-v0.1.0-beta.1.zip` | The plugin. Required on both Linux and Kindle. |
+| `koreadalong-v0.1.0-beta.2.zip` | The plugin. Required on both Linux and Kindle. |
 | `kinamp-player-pw6-v0.1.0-beta.1.zip` | **Optional:** experimental Opus-in-MP4 and 0.5–3× speed support, for the tested PW6 configuration only. Requires an existing KinAMP installation. |
 | `kinamp-bt-guard-pw6-v0.1.0-beta.1.zip` | **Optional, advanced:** Bluetooth idle workaround for the exact firmware and optional player below. Not needed to start playback. |
 | `kinamp-player-pw6-v0.1.0-beta.1-source.tar.gz` and `kinamp-bt-guard-pw6-v0.1.0-beta.1-source.tar.gz` | Matching companion source, build recipes and notices; not installation packages. |
@@ -31,6 +31,9 @@ All assets are on the same prerelease. Install only the plugin to keep stock
 KinAMP AAC playback. Neither optional ZIP is installed or enabled automatically.
 The guard requires the optional player; it is not compatible with stock KinAMP.
 The repository is private during this beta, so testers need repository access.
+
+Beta.2 updates only the plugin. The optional beta.1 player, guard, and source
+archives are unchanged; existing companion installations do not need updating.
 
 ## Choose the player
 

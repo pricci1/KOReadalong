@@ -24,6 +24,21 @@ local function invoke(object, method_name, ...)
     return true, result
 end
 
+function UnderlineOverlay.isRangeVisible(document, pos0, pos1)
+    local start_ok, start_visible = invoke(document, "isXPointerInCurrentPage", pos0)
+    local end_ok, end_visible = invoke(document, "isXPointerInCurrentPage", pos1)
+    if (start_ok and start_visible == true) or (end_ok and end_visible == true) then
+        return true
+    end
+    -- A long passage can fill the screen without either endpoint being visible.
+    -- Resolve pages afresh so font, rotation and layout changes cannot stale them.
+    local _, start_page = invoke(document, "getPageFromXPointer", pos0)
+    local _, end_page = invoke(document, "getPageFromXPointer", pos1)
+    local _, page = invoke(document, "getCurrentPage")
+    return type(start_page) == "number" and type(end_page) == "number"
+        and type(page) == "number" and page > start_page and page < end_page
+end
+
 local function normalize_boxes(boxes)
     if type(boxes) ~= "table" then
         return {}
@@ -206,29 +221,17 @@ function UnderlineOverlay:refresh()
     end
 
     local new_boxes = {}
-    if valid_pointer(self.pos0) and valid_pointer(self.pos1) then
-        local start_ok, start_visible = invoke(
+    if valid_pointer(self.pos0) and valid_pointer(self.pos1)
+        and UnderlineOverlay.isRangeVisible(self.document, self.pos0, self.pos1) then
+        local boxes_ok, boxes = invoke(
             self.document,
-            "isXPointerInCurrentPage",
-            self.pos0
+            "getScreenBoxesFromPositions",
+            self.pos0,
+            self.pos1,
+            true
         )
-        local end_ok, end_visible = invoke(
-            self.document,
-            "isXPointerInCurrentPage",
-            self.pos1
-        )
-        if (start_ok and start_visible == true)
-            or (end_ok and end_visible == true) then
-            local boxes_ok, boxes = invoke(
-                self.document,
-                "getScreenBoxesFromPositions",
-                self.pos0,
-                self.pos1,
-                true
-            )
-            if boxes_ok then
-                new_boxes = normalize_boxes(boxes)
-            end
+        if boxes_ok then
+            new_boxes = normalize_boxes(boxes)
         end
     end
 

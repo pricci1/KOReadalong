@@ -337,9 +337,13 @@ completed audio has been released; **Finished** still identifies EOF.
 
 While narration is playing or paused, a deliberate page turn or reader jump
 through the table of contents, search results, or a link suspends automatic
-following without stopping audio, timing, or chapter handoff. The panel labels
-this state **Playing · browsing** or **Paused · browsing** and retains the
-latest valid narrated XPointer range. Choose **Return to narration** in the
+following without stopping audio, timing, or chapter handoff, except when moving
+forward within the pages covered by the current narrated passage. You can turn
+through a passage spanning several pages without switching Follow off; its
+underline stays visible on the continuation pages. Moving backward, jumping
+within the same page, or moving beyond the passage still suspends following.
+The panel labels this state **Playing · browsing** or **Paused · browsing** and
+retains the latest valid narrated XPointer range. Choose **Return to narration** in the
 panel, or assign **Reader → KOReadalong: return to narration** in Gesture
 manager/Dispatcher, to jump back once and resume Following. Browsing is a
 transient session state and is not restored when the book is reopened.

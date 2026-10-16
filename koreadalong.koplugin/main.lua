@@ -114,6 +114,17 @@ local function pointer_visible(self, pointer)
     return ok and visible == true
 end
 
+local function pointer_page(self, pointer)
+    if not valid_xpointer(pointer) or not self.document
+        or type(self.document.getPageFromXPointer) ~= "function" then
+        return nil
+    end
+    local ok, page = pcall(self.document.getPageFromXPointer, self.document, pointer)
+    if ok and type(page) == "number" then
+        return page
+    end
+end
+
 function KOReadalong:_cancel_navigation_guard()
     if self.expected_navigation_action and type(UIManager.unschedule) == "function" then
         UIManager:unschedule(self.expected_navigation_action)
@@ -245,18 +256,9 @@ function KOReadalong:_expect_navigation(pointer)
         input_sequence = self.input_sequence,
         remaining = EXPECTED_NAVIGATION_EVENTS,
         serial = self.navigation_serial,
+        page = pointer_page(self, pointer),
     }
     if self.document then
-        if type(self.document.getPageFromXPointer) == "function" then
-            local ok, page = pcall(
-                self.document.getPageFromXPointer,
-                self.document,
-                pointer
-            )
-            if ok and type(page) == "number" then
-                guard.page = page
-            end
-        end
         if type(self.document.getPosFromXPointer) == "function" then
             local ok, position = pcall(
                 self.document.getPosFromXPointer,
@@ -316,7 +318,21 @@ function KOReadalong:_expected_navigation_matches(kind, value)
     return true
 end
 
-function KOReadalong:_schedule_browse_candidate(logical_changed, pointer)
+function KOReadalong:_continues_range(previous_pointer, pointer)
+    local range = self:_latest_range()
+    if not range then
+        return false
+    end
+    local previous_page = pointer_page(self, previous_pointer)
+    local page = pointer_page(self, pointer)
+    local start_page = pointer_page(self, range.pos0)
+    local end_page = pointer_page(self, range.pos1)
+    return previous_page ~= nil and page ~= nil
+        and start_page ~= nil and end_page ~= nil
+        and previous_page >= start_page and page > previous_page and page <= end_page
+end
+
+function KOReadalong:_schedule_browse_candidate(logical_changed, pointer, previous_pointer)
     if self.follow_state ~= FOLLOWING or not active_narration(self) then
         return
     end
@@ -325,12 +341,19 @@ function KOReadalong:_schedule_browse_candidate(logical_changed, pointer)
     if not logical_changed and not input_navigation then
         return
     end
+    local continues_range = self:_continues_range(previous_pointer, pointer)
+    if self.navigation_candidate and self.navigation_candidate.pointer == pointer then
+        -- PageUpdate and PosUpdate may describe the same move. Keep its first
+        -- classification rather than treating the duplicate as a same-page jump.
+        continues_range = self.navigation_candidate.continues_range
+    end
     self.navigation_serial = self.navigation_serial + 1
     local serial = self.navigation_serial
     self.navigation_candidate = {
         pointer = pointer,
         logical_changed = logical_changed,
         input_navigation = input_navigation,
+        continues_range = continues_range,
         serial = serial,
     }
     self.navigation_candidate_action = function()
@@ -344,6 +367,10 @@ function KOReadalong:_schedule_browse_candidate(logical_changed, pointer)
             return
         end
         if self.rendering and candidate.pointer == self.rendering.pointer then
+            return
+        end
+        if candidate.continues_range then
+            self.input_pending = false
             return
         end
         if candidate.logical_changed or candidate.input_navigation then
@@ -360,10 +387,11 @@ end
 function KOReadalong:_observe_position(kind, value)
     local expected = self:_expected_navigation_matches(kind, value)
     local pointer = current_xpointer(self)
-    local logical_changed = pointer ~= self.last_xpointer
+    local previous_pointer = self.last_xpointer
+    local logical_changed = pointer ~= previous_pointer
     self.last_xpointer = pointer
     if not expected then
-        self:_schedule_browse_candidate(logical_changed, pointer)
+        self:_schedule_browse_candidate(logical_changed, pointer, previous_pointer)
     end
 end
 
@@ -390,10 +418,11 @@ function KOReadalong:_mark_rendering()
 end
 
 function KOReadalong:_follow_range(pos0, pos1)
-    if self.follow_state ~= FOLLOWING or not active_narration(self) then
+    if self.follow_state ~= FOLLOWING or not active_narration(self)
+        or self.navigation_candidate then
         return
     end
-    if pointer_visible(self, pos0) or pointer_visible(self, pos1) then
+    if UnderlineOverlay.isRangeVisible(self.document, pos0, pos1) then
         return
     end
     self:_expect_navigation(pos0)

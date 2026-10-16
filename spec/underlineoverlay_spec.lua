@@ -114,6 +114,29 @@ describe("ephemeral read-along underline overlay", function()
         assert.are.same({ { x = 1, y = 2, w = 10, h = 12 } }, overlay.boxes)
     end)
 
+    it("underlines middle pages of a passage even when neither endpoint is visible", function()
+        local overlay, document = make_fixture{
+            boxes = function()
+                return { { x = 8, y = 20, w = 90, h = 16 } }
+            end,
+        }
+        local page = 4
+        function document:getCurrentPage()
+            return page
+        end
+        function document:getPageFromXPointer(pointer)
+            return pointer == "p0" and 3 or 6
+        end
+        for _, current_page in ipairs{ 4, 5, 2, 7 } do
+            page = current_page
+            overlay:setRange("p0", "p1")
+            overlay:refresh()
+            local on_passage = page == 4 or page == 5
+            assert.are.equal(on_passage, UnderlineOverlay.isRangeVisible(document, "p0", "p1"))
+            assert.are.same(on_passage and { { x = 8, y = 20, w = 90, h = 16 } } or {}, overlay.boxes)
+        end
+    end)
+
     it("clears boxes when a valid range is off-page", function()
         local overlay, _, _, dirty = make_fixture{
             visible = { p0 = true, p1 = true },

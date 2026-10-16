@@ -151,7 +151,13 @@ to **Following**; **Browsing** is never persisted. While Following, an active
 range outside the visible page uses the existing `GotoXPointer` path. A
 deliberate reader move while playing or paused changes only this state: audio,
 adapter polling, confirmed narration persistence, and timeline/resource
-handoff continue normally.
+handoff continue normally. Forward moves from a page of the active passage to
+a later page of that same passage retain Following. Page bounds are resolved
+from the active XPointers at navigation time, not cached across layout changes.
+Backward and same-page jumps, moves beyond the passage, and moves without a
+resolved range still enter Browsing. The overlay and automatic follow path share
+a visibility check that includes middle pages containing neither range endpoint,
+so continuing through a long passage neither loses its underline nor snaps back.
 
 KOReader's pinned runtime emits one `InputEvent` per input frame without source
 metadata, followed by `PageUpdate`/`PosUpdate` notifications for page turns and
@@ -159,7 +165,9 @@ programmatic jumps. `main.lua` therefore correlates those events with the
 current XPointer and uses a bounded expected-navigation guard containing the
 plugin target's XPointer, page, position, input sequence, and event budget.
 Duplicate page/position notifications are consumed by that target-aware guard;
-newer input invalidates it. Rerender, rotation, dimensions, zoom, font, and
+newer input invalidates it. Audio polls defer automatic navigation while a
+manual move awaits its next-tick classification, avoiding a snap-back before
+Browsing takes effect. Rerender, rotation, dimensions, zoom, font, and
 partial-rerender hooks suppress their resulting position events instead of
 classifying them as browsing. This avoids both the old one-event race and
 false suspension from asynchronous reader redraws.

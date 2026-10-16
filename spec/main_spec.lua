@@ -15,6 +15,7 @@ describe("KOReadalong lifecycle and menu", function()
     local goto_events
     local range_visible
     local current_xpointer
+    local pointer_pages
     local is_kindle
     local adapter_module_loads
     local mpv_adapter
@@ -114,6 +115,7 @@ describe("KOReadalong lifecycle and menu", function()
         goto_events = {}
         range_visible = true
         current_xpointer = "/body/DocFragment[1]/body/p/text().0"
+        pointer_pages = { narrated = 1, ["narrated-end"] = 1 }
         is_kindle = false
         adapter_module_loads = {
             mpv = 0,
@@ -121,6 +123,9 @@ describe("KOReadalong lifecycle and menu", function()
         }
         mpv_adapter = {}
         kindle_adapter = {}
+        function overlay.isRangeVisible()
+            return range_visible
+        end
         function overlay.new(options)
             overlay.new_count = overlay.new_count + 1
             overlay.options = options
@@ -353,7 +358,7 @@ describe("KOReadalong lifecycle and menu", function()
                     return current_xpointer
                 end,
                 getPageFromXPointer = function(_, pointer)
-                    return pointer == "narrated" and 1 or 2
+                    return pointer_pages[pointer] or 2
                 end,
                 getPosFromXPointer = function(_, pointer)
                     return pointer == "narrated" and 10 or 20
@@ -861,13 +866,65 @@ describe("KOReadalong lifecycle and menu", function()
         plugin:onReaderReady()
         coordinator.state = "playing"
         plugin.last_xpointer = current_xpointer
+        plugin.coordinator.options.on_range("narrated", "narrated-end")
 
         ui_manager.event_hook:execute("InputEvent")
         current_xpointer = "manual-page"
         plugin:onPageUpdate(2)
         assert.are.equal("following", plugin.follow_state)
+        -- An audio poll can arrive before the deferred navigation classification.
+        range_visible = false
+        plugin.coordinator.options.on_range("narrated", "narrated-end")
+        assert.are.equal(0, #goto_events)
         ui_manager:fire(plugin.navigation_candidate_action)
         assert.are.equal("browsing", plugin.follow_state)
+    end)
+
+    it("keeps following forward through a multi-page passage, but not beyond it", function()
+        plugin:onReaderReady()
+        coordinator.state = "playing"
+        pointer_pages = { narrated = 3, ["narrated-end"] = 6 }
+        current_xpointer = "narrated"
+        plugin.last_xpointer = current_xpointer
+        plugin.coordinator.options.on_range("narrated", "narrated-end")
+
+        for page = 4, 7 do
+            ui_manager.event_hook:execute("InputEvent")
+            current_xpointer = "page-" .. page
+            pointer_pages[current_xpointer] = page
+            plugin:onPageUpdate(page)
+            -- One move may emit both notifications before the next tick.
+            plugin:onPosUpdate(page * 100, page)
+            ui_manager:fire(plugin.navigation_candidate_action)
+            assert.are.equal(page <= 6 and "following" or "browsing", plugin.follow_state)
+            if page <= 6 then
+                plugin.coordinator.options.on_range("narrated", "narrated-end")
+                assert.are.equal(0, #goto_events)
+            end
+        end
+
+        -- Once narration advances, normal automatic following still works.
+        assert.is_true(plugin:returnToNarration())
+        range_visible = false
+        plugin.coordinator.options.on_range("next-start", "next-end")
+        assert.are.equal("next-start", goto_events[#goto_events].args[1])
+    end)
+
+    it("allows paused continuation but still suspends on backward and same-page jumps", function()
+        for _, destination in ipairs{ 2, 1, 3 } do
+            plugin:onReaderReady()
+            coordinator.state = "paused"
+            pointer_pages = { narrated = 1, ["narrated-end"] = 4, source = 2, target = destination }
+            current_xpointer = "source"
+            plugin:_reset_navigation()
+            plugin.coordinator.options.on_range("narrated", "narrated-end")
+
+            ui_manager.event_hook:execute("InputEvent")
+            current_xpointer = "target"
+            plugin:onPageUpdate(destination)
+            ui_manager:fire(plugin.navigation_candidate_action)
+            assert.are.equal(destination == 3 and "following" or "browsing", plugin.follow_state)
+        end
     end)
 
     it("keeps browsing after a paused manual jump and resume", function()

@@ -6,7 +6,8 @@ being read, using the book's own timing rather than a separate audiobook or
 text-to-speech service.
 
 - **Follow along.** Turn pages automatically with narration, or browse elsewhere
-  while listening and return to the narrated text when you're ready.
+  while listening and return to the narrated text when you're ready. Manually
+  turn forward within a narrated passage without switching Follow off.
 - **Pick up later.** Resume your saved place, start at the current page, or hold
   a word and choose **Read from here**.
 - **Listen your way.** Pause, seek by 15 seconds, and adjust speed from 0.5× to
@@ -17,10 +18,11 @@ text-to-speech service.
   installed KinAMP player; the tested device is a Paperwhite 6.
 
 For example: open a narrated EPUB → **Read along** → **Start here**. The active
-sentence or paragraph is underlined. Turn a page to browse without stopping
-audio, then choose **Return to narration** to follow again.
+sentence or paragraph is underlined. Turn forward to continue a passage across
+pages while keeping Follow on. Browse beyond it without stopping audio, then
+choose **Return to narration** to follow again.
 
-> **First beta:** download [v0.1.0-beta.1](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.1).
+> **Latest beta:** download [v0.1.0-beta.2](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.2).
 > The plugin, optional experimental Kindle Opus/speed player, and optional
 > Bluetooth guard are separate downloads. Read the [Kindle setup and
 > limitations](docs/kindle.md) before installing either companion.
@@ -54,8 +56,8 @@ aligned books; it does not align a separate ebook and audiobook itself.
    sudo apt install mpv
    ```
 
-3. Download `koreadalong-v0.1.0-beta.1.zip` from the
-   [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.1),
+3. Download `koreadalong-v0.1.0-beta.2.zip` from the
+   [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.2),
    verify it against `SHA256SUMS`, and extract it. Copy `koreadalong.koplugin`
    into KOReader's `plugins` directory—not the entire extracted archive.
    From a source checkout, copy that same directory. Keep its name intact:
