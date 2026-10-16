@@ -22,7 +22,7 @@ sentence or paragraph is underlined. Turn forward to continue a passage across
 pages while keeping Follow on. Browse beyond it without stopping audio, then
 choose **Return to narration** to follow again.
 
-> **Latest beta:** download [v0.1.0-beta.2](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.2).
+> **Latest beta:** download [v0.1.0-beta.3](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.3).
 > The plugin, optional experimental Kindle Opus/speed player, and optional
 > Bluetooth guard are separate downloads. Read the [Kindle setup and
 > limitations](docs/kindle.md) before installing either companion.
@@ -56,8 +56,8 @@ aligned books; it does not align a separate ebook and audiobook itself.
    sudo apt install mpv
    ```
 
-3. Download `koreadalong-v0.1.0-beta.2.zip` from the
-   [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.2),
+3. Download `koreadalong-v0.1.0-beta.3.zip` from the
+   [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.3),
    verify it against `SHA256SUMS`, and extract it. Copy `koreadalong.koplugin`
    into KOReader's `plugins` directory—not the entire extracted archive.
    From a source checkout, copy that same directory. Keep its name intact:

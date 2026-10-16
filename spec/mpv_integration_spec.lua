@@ -147,6 +147,7 @@ describe("production mpv desktop audio integration", function()
         local seek_target
         local seek_observed = false
         local pause_observed
+        local paused_position_observed
         local pause_true_commands = 0
         local transport_send = production_transport.send
         function production_transport:send(message)
@@ -167,6 +168,12 @@ describe("production mpv desktop audio integration", function()
                 if event.kind == "message" and event.message.event == "property-change"
                     and event.message.name == "pause" and event.message.data == true then
                     pause_observed = true
+                end
+                if pause_observed and event.kind == "message"
+                    and event.message.event == "property-change"
+                    and event.message.name == "time-pos"
+                    and type(event.message.data) == "number" then
+                    paused_position_observed = event.message.data
                 end
                 if seek_target == 0.2 and event.kind == "message"
                     and event.message.event == "property-change"
@@ -208,17 +215,19 @@ describe("production mpv desktop audio integration", function()
 
         local pause_true_before = pause_true_commands
         pause_observed = false
+        paused_position_observed = nil
         assert.is_true(audio:setPaused(true))
         assert.is_true(audio:setPaused(true))
         assert.are.equal(pause_true_before + 1, pause_true_commands)
         assert.is_true(wait_for(timer, function()
             return pause_observed and audio:getStatus().state == "paused"
         end, 0.8), audio:getStatus().state)
-        C.usleep(200000)
-        timer:run_due()
-        C.usleep(200000)
-        timer:run_due()
-        local paused_position = audio:getStatus().position
+        -- mpv can delay the final time-pos notification beyond the pause ack.
+        -- Measure from that observed position, not a stale pre-pause sample.
+        assert.is_true(wait_for(timer, function()
+            return paused_position_observed ~= nil
+        end, 1.5))
+        local paused_position = paused_position_observed
         C.usleep(250000)
         timer:run_due()
         assert.is_true(math.abs((audio:getStatus().position or 0) - paused_position) < 0.06)
