@@ -1,38 +1,28 @@
 # KOReadalong
 
-Read and listen to a book together in [KOReader](https://github.com/koreader/koreader).
+Read and listen to a book simultaneously in [KOReader](https://github.com/koreader/koreader).
 KOReadalong plays the audio embedded in a narrated EPUB and underlines the text
 being read, using the book's own timing rather than a separate audiobook or
 text-to-speech service.
 
-- **Follow along.** Turn pages automatically with narration, or browse elsewhere
-  while listening and return to the narrated text when you're ready. Manually
-  turn forward within a narrated passage without switching Follow off.
+- **Follow along.** Turn pages automatically with narration, or don't.
 - **Pick up later.** Resume your saved place, start at the current page, or hold
   a word and choose **Read from here**.
 - **Listen your way.** Pause, seek by 15 seconds, and adjust speed from 0.5× to
   3× on supported players. Speed is remembered per book.
-- **Keep books untouched.** Narration marks are temporary, not saved highlights;
-  the original EPUB is not modified.
-- **Linux and experimental Kindle.** Linux uses mpv. Kindle uses a separately
-  installed KinAMP player; the tested device is a Paperwhite 6.
-
-For example: open a narrated EPUB → **Read along** → **Start here**. The active
-sentence or paragraph is underlined. Turn forward to continue a passage across
-pages while keeping Follow on. Browse beyond it without stopping audio, then
-choose **Return to narration** to follow again.
+- **Linux and experimental Kindle.** Linux uses mpv. Kindle uses KinAMP (installed separately) (Only tested on a PW6).
 
 > **Latest beta:** download [v0.1.0-beta.3](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.3).
 > The plugin, optional experimental Kindle Opus/speed player, and optional
 > Bluetooth guard are separate downloads. Read the [Kindle setup and
 > limitations](docs/kindle.md) before installing either companion.
 
-**Create your own readalouds with [Storyteller](https://storyteller-platform.dev/).**
-It aligns a DRM-free EPUB with its matching audiobook and produces an EPUB with
+**Create your own _readalouds_ with [Storyteller](https://storyteller-platform.dev/).**
+It aligns a DRM-free EPUB with its matching DRM-free audiobook and produces an EPUB with
 embedded narration and timing. Follow Storyteller's [readaloud creation
 guide](https://storyteller-platform.dev/docs/managing/aligning), download the
-resulting EPUB, and open it in KOReader with KOReadalong. KOReadalong plays these
-aligned books; it does not align a separate ebook and audiobook itself.
+resulting EPUB, and open it in KOReader with KOReadalong. **KOReadalong plays these
+aligned books; it does not align a separate ebook and audiobook itself.**
 
 ## Contents
 
@@ -40,7 +30,6 @@ aligned books; it does not align a separate ebook and audiobook itself.
 - [Start listening](#start-listening)
 - [Compatibility and limitations](#compatibility-and-limitations)
 - [Report a problem](#report-a-problem)
-- [Development](#development)
 - [Credits](#credits)
 - [License](#license)
 
@@ -110,23 +99,15 @@ See the [Kindle guide](docs/kindle.md) before planning a long listening session.
 
 ## Report a problem
 
-Use the [issue tracker](https://github.com/pricci1/KOReadalong/issues), or send the
-report to the person who invited you to test. Include the release version, device and firmware,
-KOReader version, player version, what you did, and what you expected. On Kindle,
-also say whether the Bluetooth guard was enabled and how long playback ran.
-
-Do not attach copyrighted books, private settings, or raw dumps. The
-[read-only Kindle diagnostic](docs/kindle.md#report-a-problem) sanitizes media paths.
-
-## Development
-
-For building and testing from source, see the
-[development guide](docs/guide.md#development) and [architecture](docs/architecture.md).
-Maintainers can follow the [prerelease checklist](docs/releasing.md).
+Use the [issue tracker](https://github.com/pricci1/KOReadalong/issues).
+Include the release version, device and firmware, KOReader version,
+player version, what you did, and what you expected. On Kindle,
+also say whether you are using the forked version of KinAMP and if the
+Bluetooth guard was enabled and how long playback ran.
 
 ## Credits
 
-KOReadalong is made possible by these projects and their contributors:
+KOReadalong is mostly derived form, and made possible by, the following projects and their contributors:
 
 - [Storyteller](https://storyteller-platform.dev/) creates the aligned readaloud
   EPUBs that bring ebook text and audiobook narration together.
@@ -139,6 +120,4 @@ KOReadalong is made possible by these projects and their contributors:
 
 ## License
 
-KOReadalong is licensed under the [GNU Affero General Public License, version 3](LICENSE),
-the same license used by KOReader. Storyteller and KinAMP are separate projects
-with their own licenses.
+KOReadalong is licensed under the [GNU Affero General Public License, version 3](LICENSE).
