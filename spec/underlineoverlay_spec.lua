@@ -53,6 +53,18 @@ local function make_fixture(config)
         end
         return {}
     end
+    function document:getPageMargins()
+        return { left = config.margin or 24 }
+    end
+    function document:getVisiblePageCount()
+        return config.pages or 1
+    end
+    function document:getCurrentPage()
+        return 3
+    end
+    function document:getPageOffsetX(page)
+        return page == 4 and 300 or 0
+    end
 
     local ui_manager = {
         setDirty = function(_, dialog, mode, region)
@@ -71,8 +83,9 @@ local function make_fixture(config)
         end,
     }
     local blitbuffer = { COLOR_BLACK = "black" }
-    local size = { line = { medium = 2 } }
+    local size = { line = { medium = 2 }, padding = { default = 5 } }
     local overlay = UnderlineOverlay.new{
+        mode = config.mode or "underline",
         dependencies = {
             Blitbuffer = blitbuffer,
             Geom = { boundingBox = bounding_box },
@@ -234,6 +247,97 @@ describe("ephemeral read-along underline overlay", function()
         overlay:setRange("p0", "p1")
         overlay:paintTo(bb, 100, 200)
         assert.are.same({ x = 3, y = 13, w = 20, h = 2, color = "black" }, paints[1])
+    end)
+
+    it("anchors a passage bar to each page margin, not to the selected text", function()
+        local overlay, _, _, dirty, _, paints, bb = make_fixture{
+            mode = "margin",
+            pages = 2,
+            visible = { p0 = true, p1 = true },
+            boxes = function()
+                return {
+                    { x = 170, y = 210, w = 60, h = 15 },
+                    { x = 40, y = 234, w = 210, h = 18 },
+                    { x = 355, y = 30, w = 90, h = 14 },
+                    { x = 340, y = 54, w = 150, h = 16 },
+                }
+            end,
+        }
+        overlay:setRange("p0", "p1")
+        overlay:paintTo(bb, 100, 200)
+        assert.are.same({
+            { x = 17, y = 210, w = 2, h = 42, color = "black" },
+            { x = 317, y = 30, w = 2, h = 40, color = "black" },
+        }, paints)
+        clear_table(dirty)
+        clear_table(paints)
+        overlay:clear()
+        overlay:paintTo(bb, 0, 0)
+        assert.are.same({}, paints)
+        assert.are.same({ x = 17, y = 30, w = 302, h = 222 }, dirty[1].region)
+    end)
+
+    it("switches marks immediately and retains the latest range while off", function()
+        local overlay, _, _, dirty, _, paints, bb = make_fixture{
+            mode = "margin",
+            visible = { p0 = true, p1 = true, p2 = true },
+            boxes = function(pos0)
+                return { { x = 100, y = pos0 == "p0" and 40 or 80, w = 150, h = 18 } }
+            end,
+        }
+        overlay:setRange("p0", "p1")
+        clear_table(dirty)
+        overlay:setMode("underline")
+        overlay:paintTo(bb, 0, 0)
+        assert.are.same({ { x = 100, y = 57, w = 150, h = 2, color = "black" } }, paints)
+        assert.are.same({ x = 17, y = 40, w = 233, h = 19 }, dirty[1].region)
+        clear_table(dirty)
+        clear_table(paints)
+        overlay:setMode("off")
+        overlay:paintTo(bb, 0, 0)
+        assert.are.same({}, paints)
+        assert.are.same({ x = 100, y = 57, w = 150, h = 2 }, dirty[1].region)
+        overlay:setRange("p1", "p2")
+        overlay:setMode("margin")
+        overlay:paintTo(bb, 0, 0)
+        assert.are.same({ { x = 17, y = 80, w = 2, h = 18, color = "black" } }, paints)
+    end)
+
+    it("erases the old margin bar when page margins change without changing the range", function()
+        local overlay, document, _, dirty, _, paints, bb = make_fixture{
+            mode = "margin",
+            visible = { p0 = true },
+            boxes = function()
+                return { { x = 100, y = 40, w = 150, h = 18 } }
+            end,
+        }
+        overlay:setRange("p0", "p1")
+        clear_table(dirty)
+        document.getPageMargins = function() return { left = 40 } end
+        overlay:refresh()
+        overlay:paintTo(bb, 0, 0)
+        assert.are.same({ { x = 33, y = 40, w = 2, h = 18, color = "black" } }, paints)
+        assert.are.same({ x = 17, y = 40, w = 18, h = 18 }, dirty[1].region)
+    end)
+
+    it("keeps the bar out of the text when page margins are narrow or zero", function()
+        for margin = 0, 4 do
+            local overlay, _, _, _, _, paints, bb = make_fixture{
+                mode = "margin",
+                margin = margin,
+                visible = { p0 = true },
+                boxes = function()
+                    return { { x = margin, y = 30, w = 150, h = 18 } }
+                end,
+            }
+            overlay:setRange("p0", "p1")
+            overlay:paintTo(bb, 0, 0)
+            if margin < 2 then
+                assert.are.same({}, paints)
+            else
+                assert.are.same({ { x = 0, y = 30, w = 2, h = 18, color = "black" } }, paints)
+            end
+        end
     end)
 
     it("fails closed for invalid box results", function()

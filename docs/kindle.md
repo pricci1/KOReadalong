@@ -14,14 +14,14 @@ binary built for this configuration is not a universal Kindle download.
 - An EPUB containing embedded audio and EPUB 3 Media Overlays. Separate EPUB
   and audiobook files are not supported.
 - The versioned KOReadalong ZIP from the
-  [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.3). The same
+  [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.4). The same
   plugin ZIP is used for Linux and Kindle; audio players are separate.
 
 ## Choose your downloads
 
 | Asset | When to use it |
 | --- | --- |
-| `koreadalong-v0.1.0-beta.3.zip` | The plugin. Required on both Linux and Kindle. |
+| `koreadalong-v0.1.0-beta.4.zip` | The plugin. Required on both Linux and Kindle. |
 | `kinamp-player-pw6-v0.1.0-beta.1.zip` | **Optional:** experimental Opus-in-MP4 and 0.5–3× speed support, for the tested PW6 configuration only. Requires an existing KinAMP installation. |
 | `kinamp-bt-guard-pw6-v0.1.0-beta.1.zip` | **Optional, advanced:** Bluetooth idle workaround for the exact firmware and optional player below. Not needed to start playback. |
 | `kinamp-player-pw6-v0.1.0-beta.1-source.tar.gz` and `kinamp-bt-guard-pw6-v0.1.0-beta.1-source.tar.gz` | Matching companion source, build recipes and notices; not installation packages. |
@@ -107,7 +107,7 @@ not claim a reproducible byte-identical rebuild.
    archive directory. Safely eject the Kindle and start KOReader.
 4. Connect audio using **KinAMP setup and help → Bluetooth setup**. Pairing and
    connection remain user actions; KOReadalong does not change the radio.
-5. Open a narrated EPUB and choose **Read along → Start here**. KOReadalong
+5. Open a narrated EPUB and choose **Read along → Playback controls → Start here**. KOReadalong
    starts an absent KinAMP service automatically. You do not need to start a
    player manually for each book.
 

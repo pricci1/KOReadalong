@@ -2,7 +2,7 @@
 
 ## MVP outcome
 
-Open a Storyteller-compatible EPUB in KOReader, start or pause its embedded narration, seek with the book/audio controls, and underline the active text target as playback advances. Desktop Linux is the first implementation environment; the experimental Kindle adapter uses the same backend contract.
+Open a Storyteller-compatible EPUB in KOReader, start or pause its embedded narration, seek with the book/audio controls, and mark the active text target as playback advances. Desktop Linux is the first implementation environment; the experimental Kindle adapter uses the same backend contract.
 
 ## Input contract
 
@@ -34,7 +34,7 @@ KOReader reader ◀── XPointer/overlay adapter ◀── playback coordinato
   chooses the first valid target at or after a reader XPointer, validates and
   resumes saved clip locations, updates the active text target, and coordinates
   chapter/audio transitions.
-- **Reader adapter:** converts EPUB fragment IDs to CRe XPointers, derives current screen boxes, and paints ephemeral underlines. It recomputes boxes on page/position updates and document rerenders.
+- **Reader adapter:** converts EPUB fragment IDs to CRe XPointers, derives current screen boxes, and paints ephemeral margin bars or underlines. It recomputes boxes on page/position updates and document rerenders.
 - **Narration state store:** stores a content-identified clip, its XPointers,
   and confirmed audio position in KOReader's per-book `DocSettings` sidecar.
   It rejects changed clip timelines and is independent of annotations and
@@ -173,8 +173,8 @@ classifying them as browsing. This avoids both the old one-event race and
 false suspension from asynchronous reader redraws.
 
 The latest valid active range remains in XPointers while Browsing even when its
-ephemeral screen underline is off-page. **Return to narration** jumps to that
-range once, refreshes the underline, and returns to Following; it is disabled
+ephemeral screen mark is off-page. **Return to narration** jumps to that
+range once, refreshes the mark, and returns to Following; it is disabled
 or reports one calm localized message when no valid current range exists. The
 playback dialog renders the state and action with normal KOReader button sizing,
 and Dispatcher/Gesture Manager exposes the return action statically while its
@@ -194,6 +194,15 @@ discard the active XPointer; `mpvaudio.lua`, `kindleaudio.lua`, and
 `kinampport.lua` do not own reader navigation.
 
 Dynamic read-along marks should be a registered reader view module with a `paintTo` method. Persisted highlights are intentionally avoided because narration state must not enter KOReader's annotations/bookmarks/export systems. Text anchors are stored as XPointers; rendered boxes are display-dependent cache entries only. Confirmed narration state is stored separately in the book's `DocSettings` sidecar and is cleared when the user chooses **Stop**, **Start over**, or reaches EOF.
+
+**Read along → Narration mark** stores `koreadalong_mark_mode` in KOReader's
+app-wide settings: `margin` (default), `underline`, or `off`. Margin bars use
+CRe page margins and page offsets, not the first selected word's x coordinate;
+each visible page gets its own vertical extent. The overlay caches the exact
+painted rectangles so changing modes or geometry dirties both the old and new
+marks. Off suppresses painting without discarding the current XPointer range
+or changing playback/following. A margin too narrow for the bar produces no
+mark rather than painting over text.
 
 ### Compact controls and overlay progress
 

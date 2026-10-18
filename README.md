@@ -1,7 +1,7 @@
 # KOReadalong
 
 Read and listen to a book simultaneously in [KOReader](https://github.com/koreader/koreader).
-KOReadalong plays the audio embedded in a narrated EPUB and underlines the text
+KOReadalong plays the audio embedded in a narrated EPUB and marks the text
 being read, using the book's own timing rather than a separate audiobook or
 text-to-speech service.
 
@@ -12,7 +12,7 @@ text-to-speech service.
   3× on supported players. Speed is remembered per book.
 - **Linux and experimental Kindle.** Linux uses mpv. Kindle uses KinAMP (installed separately) (Only tested on a PW6).
 
-> **Latest beta:** download [v0.1.0-beta.3](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.3).
+> **Latest beta:** download [v0.1.0-beta.4](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.4).
 > The plugin, optional experimental Kindle Opus/speed player, and optional
 > Bluetooth guard are separate downloads. Read the [Kindle setup and
 > limitations](docs/kindle.md) before installing either companion.
@@ -45,8 +45,8 @@ aligned books; it does not align a separate ebook and audiobook itself.**
    sudo apt install mpv
    ```
 
-3. Download `koreadalong-v0.1.0-beta.3.zip` from the
-   [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.3),
+3. Download `koreadalong-v0.1.0-beta.4.zip` from the
+   [prerelease](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.4),
    verify it against `SHA256SUMS`, and extract it. Copy `koreadalong.koplugin`
    into KOReader's `plugins` directory—not the entire extracted archive.
    From a source checkout, copy that same directory. Keep its name intact:
@@ -68,7 +68,7 @@ requires the optional player and exact supported firmware.
 
 ## Start listening
 
-1. Open a supported EPUB, then **Read along → Start here**.
+1. Open a supported EPUB, then **Read along → Playback controls → Start here**.
 2. Use **Pause/Resume**, the 15-second seek buttons, and **Follow** in the compact
    panel. **More** reveals saved **Resume**, **Start over**, **Stop**, and speed
    controls when supported.
@@ -79,6 +79,11 @@ requires the optional player and exact supported firmware.
 To reopen controls quickly, assign **Reader → KOReadalong: show playback
 controls** in KOReader's Gesture manager. See the [reference guide](docs/guide.md#use)
 for all controls, resume behavior, progress displays, and gestures.
+
+Choose **Read along → Narration mark** for **Margin bar** (the default),
+**Underline**, or **Off**. The choice applies immediately and is saved for all
+books. Off hides only the mark; audio and page following continue unchanged.
+See [narration marks](docs/guide.md#narration-marks) for details.
 
 ## Compatibility and limitations
 

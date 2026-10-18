@@ -50,7 +50,7 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           cat > "$RUNNER_TEMP/notes.md" <<EOF
-          Read narrated EPUBs in KOReader with synchronized text underlining.
+          Read narrated EPUBs in KOReader with synchronized margin bars or underlines.
 
           Download the versioned ZIP (not the automatic source archive), verify
           SHA256SUMS, and copy only koreadalong.koplugin into KOReader's plugins

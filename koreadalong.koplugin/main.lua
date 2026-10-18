@@ -727,6 +727,7 @@ Skipped clips: %d.]]), skipped_clips)
         document = self.document,
         ui = self.ui,
         view = self.view,
+        mode = G_reader_settings:readSetting("koreadalong_mark_mode"),
     }
     self.overlay:register()
 
@@ -784,12 +785,42 @@ Skipped clips: %d.]]), skipped_clips)
 end
 
 function KOReadalong:addToMainMenu(menu_items)
+    local mark_modes = {}
+    for _, option in ipairs{
+        { "margin", _("Margin bar") },
+        { "underline", _("Underline") },
+        { "off", _("Off") },
+    } do
+        local mode = option[1]
+        mark_modes[#mark_modes + 1] = {
+            text = option[2],
+            radio = true,
+            checked_func = function()
+                return self.overlay.mode == mode
+            end,
+            callback = function()
+                self.overlay:setMode(mode)
+                G_reader_settings:saveSetting("koreadalong_mark_mode", mode)
+                G_reader_settings:flush()
+            end,
+        }
+    end
     menu_items.read_along = {
         text = _("Read along"),
         sorting_hint = "more_tools",
-        callback = function()
-            self:_show_playback_controls()
-        end,
+        sub_item_table = {
+            {
+                text = _("Playback controls"),
+                callback = function()
+                    self:_show_playback_controls()
+                end,
+            },
+            {
+                text = _("Narration mark"),
+                help_text = _("Applies to all books. Off hides the narration mark without stopping audio or page following."),
+                sub_item_table = mark_modes,
+            },
+        },
     }
     if Device:isKindle() then
         menu_items.kinamp_help = {

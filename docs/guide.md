@@ -5,7 +5,7 @@ For installation, start with the [README](../README.md) or the
 backend behavior, and historical validation findings. Test results below describe
 specific checkpoints, not a guarantee for every device or a published release.
 
-KOReadalong is a [KOReader](https://github.com/koreader/koreader) plugin for reading EPUB 3 books alongside their embedded audio. The Linux desktop MVP plays EPUB Media Overlays and underlines the sentence or paragraph currently being narrated.
+KOReadalong is a [KOReader](https://github.com/koreader/koreader) plugin for reading EPUB 3 books alongside their embedded audio. The Linux desktop MVP plays EPUB Media Overlays and marks the sentence or paragraph currently being narrated with a vertical margin bar or underline.
 
 The current implementation targets KOReader's Linux desktop build. Experimental
 Kindle playback is available through KinAMP with degraded timing; the tested
@@ -51,7 +51,7 @@ Kindle models or firmware.
 4. Connect your Bluetooth audio device. **KinAMP setup and help → Bluetooth
    setup** opens the official plugin's existing device settings.
 5. Open a narrated EPUB and press **Start here** (or saved **Resume**) in
-   **Read along**. KOReadalong starts an absent KinAMP service in idle mode and
+   **Read along → Playback controls**. KOReadalong starts an absent KinAMP service in idle mode and
    waits for readiness before loading narration. No terminal or separate player
    start/stop step is needed.
 
@@ -256,7 +256,7 @@ with the inspector stopped; disabling the inspector alone does not fix it.
 | Timing or seeks are slightly coarse | Stock KinAMP publishes whole seconds; the speed prototype adds millisecond estimates. Both round seek requests to the nearest second. | Treat Kindle timing as degraded; fractional estimates do not establish an exact audible playhead. |
 | Resume jumps backward after a pause | KinAMP 3.0.0's `play` command can rewind its synthetic clock. | Use KOReadalong's **Pause/Resume**. The adapter works around this by resuming with a whole-second `seek` to the last published paused position. |
 | Playback appears to finish after an external stop, or the final position is stale | KinAMP's protocol cannot distinguish an external stop from natural EOF. | Treat the result as ambiguous; avoid stopping the daemon from another client when reliable EOF detection matters. |
-| Audio continues after the controls disappear | **Hide** only hides the controls; it does not stop playback. | Reopen **Read along** to show the controls. Use **Stop** to stop narration and reset playback to the first clip. |
+| Audio continues after the controls disappear | **Hide** only hides the controls; it does not stop playback. | Reopen **Read along → Playback controls** to show the controls. Use **Stop** to stop narration and reset playback to the first clip. |
 | Audio continues after a reader crash | KinAMP is independent and does not monitor reader death. | Reopen KOReader and the EPUB, then press **Start**. A positively identified orphan is recovered automatically; unknown or other-client playback is left untouched. |
 
 ### Workarounds and limitations
@@ -286,8 +286,8 @@ with the inspector stopped; disabling the inspector alone does not fix it.
 
 ## Use
 
-Open an EPUB containing EPUB 3 Media Overlays. Supported books gain a
-compact, bottom-anchored **Read along** panel with 15-second seek buttons,
+Open an EPUB containing EPUB 3 Media Overlays. Choose **Read along → Playback
+controls** to open the compact, bottom-anchored panel with 15-second seek buttons,
 **Pause/Resume** (or **Start here** when idle), **Follow**, and **Hide**.
 **More** reveals **Stop**, saved **Resume**, **Start here**, **Start over**, and
 **Return to narration**; **Less** collapses those extra actions. Unavailable
@@ -340,7 +340,7 @@ through the table of contents, search results, or a link suspends automatic
 following without stopping audio, timing, or chapter handoff, except when moving
 forward within the pages covered by the current narrated passage. You can turn
 through a passage spanning several pages without switching Follow off; its
-underline stays visible on the continuation pages. Moving backward, jumping
+narration mark stays visible on the continuation pages unless marks are off. Moving backward, jumping
 within the same page, or moving beyond the passage still suspends following.
 The panel labels this state **Playing · browsing** or **Paused · browsing** and
 retains the latest valid narrated XPointer range. Choose **Return to narration** in the
@@ -354,6 +354,19 @@ it on returns to the active text if available; otherwise it waits for the next
 valid narrated range. **Text highlighting unavailable** means narration is active
 but no current text range is resolved, not an audio failure. Embedded SMIL timing
 is used unchanged, even for unusually long clips.
+
+### Narration marks
+
+Choose **Read along → Narration mark** to select **Margin bar** (the default),
+**Underline**, or **Off**. This preference is saved for all books and takes
+effect immediately, including while paused. Off hides only the mark: audio,
+page following, and Return to narration continue to work.
+
+The margin bar sits just outside the page's text column and spans the visible
+lines of the active narration target. A two-page spread gets a separate bar on
+each affected page. Unlike an underline, the bar identifies lines rather than
+exact word boundaries. With no room in the page margin, the bar is omitted
+rather than drawn over the text. Neither style creates a saved annotation.
 
 ### Assign a gesture
 
@@ -414,7 +427,7 @@ lightweight test is included in `make check`.
 `make smoke-integration` generates a synthetic EPUB and exercises the complete
 pinned-KOReader pipeline: package and SMIL parsing, private audio extraction,
 real mpv IPC, timeline lookup, CRe fragment resolution, the playback panel,
-ephemeral underline, browse-away without snap-back, Return to narration,
+ephemeral narration mark, browse-away without snap-back, Return to narration,
 following across a resource transition, EOF handling, and cleanup.
 
 For native panel captures, create a scratch output directory and set

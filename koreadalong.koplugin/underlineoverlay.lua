@@ -99,14 +99,6 @@ local function underline_rect(box, thickness)
     }
 end
 
-local function underline_rects(boxes, thickness)
-    local rects = {}
-    for index, box in ipairs(boxes) do
-        rects[index] = underline_rect(box, thickness)
-    end
-    return rects
-end
-
 local function dirty_region(geom, old_rects, new_rects)
     local boxes = {}
     for _, rect in ipairs(old_rects) do
@@ -136,6 +128,8 @@ function UnderlineOverlay.new(first, second)
         active = true,
         cache_valid = true,
         boxes = {},
+        rects = {},
+        mode = (options.mode == "underline" or options.mode == "off") and options.mode or "margin",
         dialog = options.dialog or (ui and ui.dialog) or (view and view.dialog),
         document = options.document or (ui and ui.document) or (view and view.document),
         geom = geom,
@@ -165,23 +159,68 @@ function UnderlineOverlay:register(view)
     return true
 end
 
-function UnderlineOverlay:_dirty(old_boxes, new_boxes)
+function UnderlineOverlay:_painted_rects(boxes)
+    local rects = {}
     local thickness = line_thickness(self.size)
-    local old_rects = underline_rects(old_boxes, thickness)
-    local new_rects = underline_rects(new_boxes, thickness)
-    local region = dirty_region(self.geom, old_rects, new_rects)
-    if region and self.ui_manager and type(self.ui_manager.setDirty) == "function" then
-        self.ui_manager:setDirty(self.dialog, "ui", region)
+    if self.mode == "underline" then
+        for index, box in ipairs(boxes) do
+            rects[index] = underline_rect(box, thickness)
+        end
+    elseif self.mode == "margin" and #boxes > 0 then
+        local margins = self.document:getPageMargins()
+        local offsets = { 0 }
+        if self.document:getVisiblePageCount() > 1 then
+            local page = self.document:getCurrentPage(true)
+            offsets[2] = self.document:getPageOffsetX(page + 1)
+        end
+        for index, offset in ipairs(offsets) do
+            local top, bottom
+            for _, box in ipairs(boxes) do
+                if box.x >= offset and (not offsets[index + 1] or box.x < offsets[index + 1]) then
+                    top = math.min(top or box.y, box.y)
+                    bottom = math.max(bottom or box.y + box.h, box.y + box.h)
+                end
+            end
+            -- Keep the bar at the text column's margin, even for indented
+            -- paragraphs or ranges starting mid-line. Never paint over text
+            -- when the reader has removed the page margin entirely.
+            local gap = math.min(self.size.padding.default, margins.left - thickness)
+            if top and gap >= 0 then
+                rects[#rects + 1] = {
+                    x = math.floor(offset + margins.left - gap - thickness),
+                    y = math.floor(top),
+                    w = thickness,
+                    h = math.ceil(bottom) - math.floor(top),
+                }
+            end
+        end
     end
+    return rects
 end
 
 function UnderlineOverlay:_replace_boxes(new_boxes)
-    local old_boxes = self.boxes
+    local old_rects = self.rects
+    local new_rects = self:_painted_rects(new_boxes)
     self.boxes = new_boxes
+    self.rects = new_rects
     self.cache_valid = true
-    if not boxes_equal(old_boxes, new_boxes) then
-        self:_dirty(old_boxes, new_boxes)
+    if not boxes_equal(old_rects, new_rects) then
+        local region = dirty_region(self.geom, old_rects, new_rects)
+        if region and self.ui_manager and type(self.ui_manager.setDirty) == "function" then
+            self.ui_manager:setDirty(self.dialog, "ui", region)
+        end
     end
+end
+
+function UnderlineOverlay:setMode(mode)
+    if not self.active or (mode ~= "margin" and mode ~= "underline" and mode ~= "off") then
+        return false
+    end
+    self.mode = mode
+    if self.cache_valid then
+        self:_replace_boxes(self.boxes)
+    end
+    return true
 end
 
 function UnderlineOverlay:clear()
@@ -244,9 +283,7 @@ function UnderlineOverlay:paintTo(bb, _x, _y)
         return
     end
 
-    local thickness = line_thickness(self.size)
-    for _, box in ipairs(self.boxes) do
-        local rect = underline_rect(box, thickness)
+    for _, rect in ipairs(self.rects) do
         bb:paintRect(
             rect.x,
             rect.y,

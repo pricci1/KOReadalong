@@ -20,6 +20,7 @@ describe("KOReadalong lifecycle and menu", function()
     local adapter_module_loads
     local mpv_adapter
     local kindle_adapter
+    local original_reader_settings
 
     local clips = {
         {
@@ -33,6 +34,12 @@ describe("KOReadalong lifecycle and menu", function()
     }
 
     before_each(function()
+        original_reader_settings = _G.G_reader_settings
+        _G.G_reader_settings = {
+            readSetting = function(self, key) return self[key] end,
+            saveSetting = function(self, key, value) self[key] = value end,
+            flush = function() end,
+        }
         for _, module_name in ipairs{
             "main",
             "device",
@@ -129,7 +136,10 @@ describe("KOReadalong lifecycle and menu", function()
         function overlay.new(options)
             overlay.new_count = overlay.new_count + 1
             overlay.options = options
-            local instance = {}
+            local instance = { mode = options.mode or "margin" }
+            function instance:setMode(mode)
+                self.mode = mode
+            end
             function instance:register()
                 overlay.register_count = overlay.register_count + 1
             end
@@ -389,6 +399,7 @@ describe("KOReadalong lifecycle and menu", function()
     end)
 
     after_each(function()
+        _G.G_reader_settings = original_reader_settings
         for _, module_name in ipairs{
             "main",
             "device",
@@ -549,9 +560,10 @@ describe("KOReadalong lifecycle and menu", function()
         plugin:addToMainMenu(items)
         assert.are.equal("Read along", items.read_along.text)
         assert.is_nil(items.kinamp_help)
-        assert.is_function(items.read_along.callback)
-        items.read_along.callback()
-        items.read_along.callback()
+        local controls = items.read_along.sub_item_table[1]
+        assert.are.equal("Playback controls", controls.text)
+        controls.callback()
+        controls.callback()
         assert.are.equal(1, playback_dialog.new_count)
         assert.are.equal(1, #ui_manager.shown)
         assert.are.equal("playback_dialog", ui_manager.shown[1].kind)
@@ -561,6 +573,29 @@ describe("KOReadalong lifecycle and menu", function()
         assert.is_true(plugin:onShowReadAlongControls())
         assert.are.equal(2, playback_dialog.new_count)
         assert.are.equal(2, #ui_manager.shown)
+    end)
+
+    it("defaults to margin bars and persists all narration mark choices across books", function()
+        plugin:onReaderReady()
+        local items = {}
+        plugin:addToMainMenu(items)
+        local marks = items.read_along.sub_item_table[2]
+        assert.are.equal("Narration mark", marks.text)
+        local choices = marks.sub_item_table
+        assert.is_true(choices[1].checked_func())
+        for index, mode in ipairs{ "margin", "underline", "off" } do
+            choices[index].callback()
+            assert.are.equal(mode, G_reader_settings.koreadalong_mark_mode)
+            for other_index, choice in ipairs(choices) do
+                assert.are.equal(index == other_index, choice.checked_func())
+            end
+            assert.are.equal("idle", coordinator:getState())
+            -- Reinitialize with a fresh book sidecar; the mark is app-wide.
+            plugin.probed = false
+            plugin.ui.doc_settings.koreadalong_mark_mode = "unrelated book value"
+            plugin:onReaderReady()
+            assert.are.equal(mode, plugin.overlay.mode)
+        end
     end)
 
     it("explains integrated Kindle startup and opens existing Bluetooth setup", function()
