@@ -1,3 +1,5 @@
+local NarrationRanges = require("narrationranges")
+
 local PlaybackCoordinator = {}
 PlaybackCoordinator.__index = PlaybackCoordinator
 
@@ -32,29 +34,6 @@ local function invoke_optional(object, method_name, ...)
         return nil
     end
     pcall(method, object, ...)
-end
-
-local function resolve_fragment(resolver, document, clip, next_clip)
-    local method = resolver and resolver.resolve
-    if type(method) ~= "function" then
-        return nil, "fragment resolver is missing resolve"
-    end
-    local ok, range, error_message = pcall(
-        method,
-        document,
-        clip,
-        next_clip
-    )
-    if not ok then
-        return nil, tostring(range)
-    end
-    return range, error_message
-end
-
-local function same_resolver_context(left, right)
-    return left and right
-        and left.spine_index == right.spine_index
-        and left.text_path == right.text_path
 end
 
 local function valid_xpointer(pointer)
@@ -151,6 +130,10 @@ function PlaybackCoordinator.new(options)
         poll_interval = options.poll_interval or POLL_INTERVAL,
     }, PlaybackCoordinator)
 
+    self.ranges = NarrationRanges.new{
+        clips = clips, document = self.document,
+        resolver = self.resolver, cache = self.range_cache,
+    }
     self.clip_indexes = {}
     for index, clip in ipairs(clips) do
         self.clip_indexes[clip] = index
@@ -424,49 +407,11 @@ function PlaybackCoordinator:_fail(error_message, skip_stop)
 end
 
 function PlaybackCoordinator:_next_clip(index)
-    local clip = self.clips[index]
-    for next_index = index + 1, #self.clips do
-        local next_clip = self.clips[next_index]
-        if not same_resolver_context(clip, next_clip) then
-            return nil
-        end
-        if next_clip.text_fragment ~= clip.text_fragment then
-            return next_clip
-        end
-    end
-    return nil
+    return self.ranges:nextClip(index)
 end
 
 function PlaybackCoordinator:_get_range(index)
-    local cached = self.range_cache[index]
-    if cached == false then
-        return nil
-    end
-    if cached then
-        return cached
-    end
-
-    local clip = self.clips[index]
-    local next_clip = self:_next_clip(index)
-    local range, resolve_error = resolve_fragment(
-        self.resolver,
-        self.document,
-        clip,
-        next_clip
-    )
-    if type(range) ~= "table"
-        or type(range.pos0) ~= "string"
-        or type(range.pos1) ~= "string" then
-        -- Fragment failures are expected for unsupported Storyteller targets
-        -- and must not interrupt audio or produce repeated dialogs.
-        self.range_cache[index] = false
-        return nil, resolve_error
-    end
-    self.range_cache[index] = {
-        pos0 = range.pos0,
-        pos1 = range.pos1,
-    }
-    return self.range_cache[index]
+    return self.ranges:get(index)
 end
 
 function PlaybackCoordinator:_resolve_range(index)
