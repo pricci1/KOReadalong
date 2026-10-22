@@ -81,6 +81,9 @@ local function valid_xpointer(pointer)
 end
 
 local function active_narration(self)
+    if self.remote then
+        return self.remote:isActive()
+    end
     if not self.coordinator
         or type(self.coordinator.getState) ~= "function" then
         return false
@@ -439,8 +442,9 @@ function KOReadalong:_latest_range()
             pos1 = self.latest_range.pos1,
         }
     end
-    if self.coordinator and type(self.coordinator.getCurrentRange) == "function" then
-        local ok, range = pcall(self.coordinator.getCurrentRange, self.coordinator)
+    local source = self.remote or self.coordinator
+    if source and type(source.getCurrentRange) == "function" then
+        local ok, range = pcall(source.getCurrentRange, source)
         if ok and type(range) == "table"
             and valid_xpointer(range.pos0)
             and valid_xpointer(range.pos1) then
@@ -572,8 +576,10 @@ function KOReadalong:_show_playback_controls()
     if self.playback_dialog then
         return
     end
-    self.playback_dialog = PlaybackDialog:new{
+    local dialog = self.remote and require("remotedialog") or PlaybackDialog
+    self.playback_dialog = dialog:new{
         coordinator = self.coordinator,
+        follower = self.remote,
         scheduler = UIManager,
         get_follow_state = function()
             return self.follow_state
@@ -604,7 +610,7 @@ function KOReadalong:_show_playback_controls()
 end
 
 function KOReadalong:onShowReadAlongControls()
-    if not self.coordinator then
+    if not self.coordinator and not self.remote then
         return false
     end
     self:_show_playback_controls()
@@ -640,6 +646,9 @@ function KOReadalong:_register_highlight_action()
                 return ok and accepted == true
             end,
             callback = function()
+                if not self.coordinator then
+                    return
+                end
                 if type(this.highlightFromHoldPos) == "function" then
                     this:highlightFromHoldPos()
                 end
@@ -717,11 +726,16 @@ Skipped clips: %d.]]), skipped_clips)
         return
     end
 
-    local state_store = NarrationState.new{
-        settings = self.ui.doc_settings,
-        clips = clips,
-    }
+    self.clips, self.timeline = clips, timeline
+    self:_create_source(self.ui.doc_settings:readSetting("koreadalong_source"))
+    self.last_xpointer = current_xpointer(self)
+    self:_register_input_hook()
+    self:_register_highlight_action()
+    self.ui.menu:registerToMainMenu(self)
+end
 
+function KOReadalong:_create_source(mode)
+    self.source_mode = mode == "remote" and "remote" or "local"
     self.overlay = UnderlineOverlay.new{
         dialog = self.dialog,
         document = self.document,
@@ -731,27 +745,10 @@ Skipped clips: %d.]]), skipped_clips)
     }
     self.overlay:register()
 
-    self.coordinator = PlaybackCoordinator.new{
-        adapter = new_audio_adapter(),
+    local options = {
         scheduler = UIManager,
-        speed = self.ui.doc_settings:readSetting("koreadalong_playback_speed"),
-        on_speed = function(speed)
-            self.ui.doc_settings:saveSetting("koreadalong_playback_speed", speed)
-            self.ui.doc_settings:flush()
-        end,
-        archive_reader = function(path)
-            return self:_read_document_file(path)
-        end,
-        materializer = Materializer.new{},
-        timeline = timeline,
-        resolver = FragmentResolver,
-        document = self.document,
-        state_store = state_store,
-        get_current_xpointer = function()
-            return self.document:getXPointer()
-        end,
         overlay = self.overlay,
-        clips = clips,
+        clips = self.clips,
         on_range = function(pos0, pos1)
             if valid_xpointer(pos0) and valid_xpointer(pos1) then
                 local was_return_available = self:canReturnToNarration()
@@ -778,10 +775,55 @@ Skipped clips: %d.]]), skipped_clips)
             self:_show_error(error_message)
         end,
     }
-    self.last_xpointer = current_xpointer(self)
-    self:_register_input_hook()
-    self:_register_highlight_action()
-    self.ui.menu:registerToMainMenu(self)
+    if self.source_mode == "remote" then
+        local time = require("ui/time")
+        options.clock = function() return time.to_s(time.now()) end
+        options.port = require("storytellersync").new{ clock = options.clock }
+        options.ranges = require("narrationranges").new{
+            clips = self.clips, resolver = FragmentResolver, document = self.document,
+        }
+        options.correction = self.ui.doc_settings:readSetting("koreadalong_remote_correction")
+        options.on_correction = function(value)
+            self.ui.doc_settings:saveSetting("koreadalong_remote_correction", value)
+            self.ui.doc_settings:flush()
+        end
+        -- Opening a book never opens sockets, extracts audio, or constructs a player.
+        self.remote = require("remotefollower").new(options)
+    else
+        options.adapter = new_audio_adapter()
+        options.speed = self.ui.doc_settings:readSetting("koreadalong_playback_speed")
+        options.on_speed = function(speed)
+            self.ui.doc_settings:saveSetting("koreadalong_playback_speed", speed)
+            self.ui.doc_settings:flush()
+        end
+        options.archive_reader = function(path) return self:_read_document_file(path) end
+        options.materializer = Materializer.new{}
+        options.timeline, options.resolver, options.document = self.timeline, FragmentResolver, self.document
+        options.state_store = NarrationState.new{ settings = self.ui.doc_settings, clips = self.clips }
+        options.get_current_xpointer = function() return self.document:getXPointer() end
+        self.coordinator = PlaybackCoordinator.new(options)
+    end
+end
+
+function KOReadalong:setAudioSource(mode)
+    if not self.clips or (mode ~= "local" and mode ~= "remote") then
+        return nil, _("Audio source is unavailable")
+    end
+    if mode == self.source_mode then return true end
+    if self.playback_dialog then
+        UIManager:close(self.playback_dialog)
+        self.playback_dialog = nil
+    end
+    -- Close saves local resume, unlike Stop which resets it. Neither source
+    -- controls the phone's transport, even when the user switches back to local.
+    if self.coordinator then self.coordinator:close(); self.coordinator = nil end
+    if self.remote then self.remote:close(); self.remote = nil end
+    self.overlay:deactivate()
+    self:_reset_navigation()
+    self:_create_source(mode)
+    self.ui.doc_settings:saveSetting("koreadalong_source", mode)
+    self.ui.doc_settings:flush()
+    return true
 end
 
 function KOReadalong:addToMainMenu(menu_items)
@@ -819,6 +861,28 @@ function KOReadalong:addToMainMenu(menu_items)
                 text = _("Narration mark"),
                 help_text = _("Applies to all books. Off hides the narration mark without stopping audio or page following."),
                 sub_item_table = mark_modes,
+            },
+            {
+                text = _("Audio source"),
+                help_text = _("Saved for this book. Switching stops local audio but preserves its resume position. Phone playback is always controlled on the phone."),
+                sub_item_table = {
+                    {
+                        text = _("This device"), radio = true,
+                        checked_func = function() return self.source_mode == "local" end,
+                        callback = function()
+                            self:setAudioSource("local")
+                            self:_show_playback_controls()
+                        end,
+                    },
+                    {
+                        text = _("Storyteller phone (experimental)"), radio = true,
+                        checked_func = function() return self.source_mode == "remote" end,
+                        callback = function()
+                            self:setAudioSource("remote")
+                            self:_show_playback_controls()
+                        end,
+                    },
+                },
             },
         },
     }
@@ -889,10 +953,21 @@ function KOReadalong:onCloseDocument()
     end
     if self.coordinator then
         self.coordinator:close()
-    elseif self.overlay then
+    end
+    if self.remote then
+        self.remote:close()
+    end
+    if self.overlay then
         self.overlay:deactivate()
     end
 end
+
+function KOReadalong:onSuspend()
+    -- A stale network route must not silently resume pairing after wake.
+    if self.remote then self.remote:stop() end
+end
+
+KOReadalong.onNetworkDisconnected = KOReadalong.onSuspend
 
 function KOReadalong:onCloseWidget()
     self:onCloseDocument()

@@ -21,6 +21,7 @@ describe("KOReadalong lifecycle and menu", function()
     local mpv_adapter
     local kindle_adapter
     local original_reader_settings
+    local network
 
     local clips = {
         {
@@ -52,6 +53,9 @@ describe("KOReadalong lifecycle and menu", function()
             "kindleaudio",
             "playbackcoordinator",
             "playbackdialog",
+            "remotedialog",
+            "storytellersync",
+            "ui/time",
             "narrationstate",
         } do
             package.loaded[module_name] = nil
@@ -130,6 +134,11 @@ describe("KOReadalong lifecycle and menu", function()
         }
         mpv_adapter = {}
         kindle_adapter = {}
+        network = { opened = false }
+        function network:start() self.opened = true; return true end
+        function network:close() self.opened = false end
+        function network:poll() return {} end
+        function network:getAddress() if self.opened then return "127.0.0.1", 12345 end end
         function overlay.isRangeVisible()
             return range_visible
         end
@@ -312,6 +321,15 @@ describe("KOReadalong lifecycle and menu", function()
         package.preload["playbackdialog"] = function()
             return playback_dialog
         end
+        package.preload["remotedialog"] = function()
+            return playback_dialog
+        end
+        package.preload["storytellersync"] = function()
+            return { new = function() return network end }
+        end
+        package.preload["ui/time"] = function()
+            return { now = function() return 100 end, to_s = function(value) return value end }
+        end
         package.preload["mpvaudio"] = function()
             adapter_module_loads.mpv = adapter_module_loads.mpv + 1
             return {
@@ -412,6 +430,9 @@ describe("KOReadalong lifecycle and menu", function()
             "kindleaudio",
             "playbackcoordinator",
             "playbackdialog",
+            "remotedialog",
+            "storytellersync",
+            "ui/time",
             "narrationstate",
             "ui/uimanager",
             "ui/event",
@@ -468,6 +489,60 @@ describe("KOReadalong lifecycle and menu", function()
         assert.is_nil(package.loaded["mpvaudio"])
         assert.is_not_nil(package.loaded["kindleaudio"])
         assert.are.equal(kindle_adapter, coordinator.options.adapter)
+    end)
+
+    it("opens remote books without a player or sockets and stops listening on suspend/disconnect", function()
+        plugin.ui.doc_settings.koreadalong_source = "remote"
+        plugin.ui.doc_settings.koreadalong_narration_location = { saved = "local resume" }
+        plugin:onReaderReady()
+        assert.is_nil(plugin.coordinator)
+        assert.are.equal(0, adapter_module_loads.mpv + adapter_module_loads.kindle)
+        assert.is_false(network.opened)
+        assert.are.equal("idle", plugin.remote:getStatus().state)
+        assert.is_true(plugin:onShowReadAlongControls())
+        assert.are.equal(plugin.remote, ui_manager.shown[1].follower)
+        local button = highlight.buttons["12_read_from_here"](highlight)
+        highlight.selected_text = { pos0 = "start", pos1 = "end" }
+        assert.is_false(button.show_in_highlight_dialog_func())
+        button.callback() -- stale selection must not try local transport
+
+        assert(plugin.remote:start())
+        assert.is_true(network.opened)
+        plugin:onSuspend()
+        assert.is_false(network.opened)
+        assert.are.equal("idle", plugin.remote:getStatus().state)
+        assert(plugin.remote:start())
+        plugin:onNetworkDisconnected()
+        assert.is_false(network.opened)
+        assert(plugin.remote:start())
+        plugin:onCloseDocument()
+        assert.is_false(network.opened)
+        assert.are.equal("closed", plugin.remote:getStatus().state)
+        assert.are.same({ saved = "local resume" }, plugin.ui.doc_settings.koreadalong_narration_location)
+    end)
+
+    it("switches sources without autoplay or resetting local resume and remembers remote correction", function()
+        plugin:onReaderReady()
+        coordinator.state = "paused"
+        plugin:onShowReadAlongControls()
+        assert(plugin:setAudioSource("remote"))
+        assert.are.equal(1, coordinator.close_count)
+        assert.are.equal(0, coordinator.stop_count)
+        assert.is_nil(plugin.playback_dialog)
+        assert.is_nil(plugin.coordinator)
+        assert.are.equal("remote", plugin.ui.doc_settings.koreadalong_source)
+        assert.is_false(network.opened)
+        assert(plugin.remote:setCorrection(-0.75))
+        assert.are.equal(-0.75, plugin.ui.doc_settings.koreadalong_remote_correction)
+        assert(plugin.remote:start())
+        assert(plugin:setAudioSource("local"))
+        assert.is_false(network.opened)
+        assert.is_nil(plugin.remote)
+        assert.is_not_nil(plugin.coordinator)
+        assert(plugin:setAudioSource("remote"))
+        assert.are.equal(-0.75, plugin.remote:getStatus().correction)
+        assert.is_false(network.opened)
+        plugin:onCloseDocument()
     end)
 
     it("silently leaves ordinary documents untouched", function()
