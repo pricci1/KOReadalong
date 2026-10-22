@@ -44,6 +44,24 @@ KOReader reader ◀── XPointer/overlay adapter ◀── playback coordinato
   and dynamic `supportsSpeed`. Desktop and Kindle implementations share this
   contract; speed changes never change pause intent or media-time units.
 
+## Remote narration source
+
+The experimental Storyteller source bypasses the playback coordinator and audio
+adapters. `storytellersync.lua` owns mDNS/UDP IO; `remotefollower.lua` consumes
+validated position events with an injected monotonic clock. An explicitly
+selected phone/book drives archive-path/fragment matching against the local
+overlay timeline, never foreign section/entry indices. It shares
+`narrationranges.lua`, CRe XPointers, ephemeral marks and browse/follow behavior
+with local playback, but not audio extraction or local resume state.
+
+The native remote panel has no transport controls. Delayed marks are based on
+receipt time; early marks use a bounded, retractable next-target estimate rather
+than a free-running clock. The app cannot infer pause or EOF from silence.
+Source changes close the old source before creating the new one; opening a
+remote book creates neither sockets nor a local player. See
+[remote playback](remote-playback.md) for the upstream contract, security
+boundary, lifecycle, and verification commands.
+
 ## Parser and timeline contract
 
 The platform-neutral parser is `mediaoverlays.lua` inside the plugin directory. It

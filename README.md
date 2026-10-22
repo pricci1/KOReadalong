@@ -11,6 +11,9 @@ text-to-speech service.
 - **Listen your way.** Pause, seek by 15 seconds, and adjust speed from 0.5× to
   3× on supported players. Speed is remembered per book.
 - **Linux and experimental Kindle.** Linux uses mpv. Kindle uses KinAMP (installed separately) (Only tested on a PW6).
+- **Phone audio (experimental, unreleased).** Follow Storyteller v3 Live Reading
+  Sync over a trusted LAN while the phone plays audio. Includes later/earlier
+  mark correction; earlier is predictive. See [remote playback](docs/remote-playback.md).
 
 > **Latest beta:** download [v0.1.0-beta.4](https://github.com/pricci1/KOReadalong/releases/tag/v0.1.0-beta.4).
 > The plugin, optional experimental Kindle Opus/speed player, and optional
@@ -28,6 +31,7 @@ aligned books; it does not align a separate ebook and audiobook itself.**
 
 - [Install](#install)
 - [Start listening](#start-listening)
+- [Use phone audio](#use-phone-audio-experimental)
 - [Compatibility and limitations](#compatibility-and-limitations)
 - [Report a problem](#report-a-problem)
 - [Credits](#credits)
@@ -39,7 +43,8 @@ aligned books; it does not align a separate ebook and audiobook itself.**
 
 1. Install [KOReader](https://github.com/koreader/koreader/releases). Development
    and integration testing use its Linux x86_64 v2026.07.1 build.
-2. Install `mpv` on your PATH. On Debian or Ubuntu:
+2. For audio on this device, install `mpv` on your PATH. Phone-only remote mode
+   does not need it. On Debian or Ubuntu:
 
    ```sh
    sudo apt install mpv
@@ -84,6 +89,19 @@ Choose **Read along → Narration mark** for **Margin bar** (the default),
 **Underline**, or **Off**. The choice applies immediately and is saved for all
 books. Off hides only the mark; audio and page following continue unchanged.
 See [narration marks](docs/guide.md#narration-marks) for details.
+
+## Use phone audio (experimental)
+
+In a source build, choose **Read along → Audio source → Storyteller phone
+(experimental) → Listen**. Enable **Live Reading Sync** in the native
+Storyteller v3 app, play or seek there, then **Choose phone / book** in KOReader.
+Use the same aligned EPUB on both devices and a trusted local network.
+
+**Later / Earlier** adjust the marks, not audio speed. Earlier is a bounded
+estimate because the phone protocol has no continuous clock or pause messages.
+No mpv, KinAMP, or Bluetooth connection is required on the reader in this mode.
+The feature is not in the beta.4 download and physical phone/Kindle testing is
+still needed. See [setup, correction, limitations, and simulator](docs/remote-playback.md).
 
 ## Compatibility and limitations
 

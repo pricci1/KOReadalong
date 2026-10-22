@@ -398,6 +398,11 @@ annotations.
 
 ## Development
 
+For experimental phone-audio following, including setup, timing correction,
+trusted-LAN requirements, and physical-device test limits, see
+[remote playback](remote-playback.md). That mode has its own controls and does
+not use the local mpv/KinAMP transport described above.
+
 From the repository root on a Debian-based development machine, install the
 development dependencies and checksum-pinned KOReader runtime, then run the checks:
 
@@ -407,6 +412,7 @@ make check
 make mpv-integration
 make kinamp-integration
 make smoke-integration
+make remote-integration
 make run
 ```
 
