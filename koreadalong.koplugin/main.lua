@@ -869,7 +869,9 @@ function KOReadalong:addToMainMenu(menu_items)
                     {
                         text = _("This device"), radio = true,
                         checked_func = function() return self.source_mode == "local" end,
-                        callback = function()
+                        check_callback_closes_menu = true,
+                        callback = function(menu)
+                            if menu then menu:closeMenu() end
                             self:setAudioSource("local")
                             self:_show_playback_controls()
                         end,
@@ -877,7 +879,9 @@ function KOReadalong:addToMainMenu(menu_items)
                     {
                         text = _("Storyteller phone (experimental)"), radio = true,
                         checked_func = function() return self.source_mode == "remote" end,
-                        callback = function()
+                        check_callback_closes_menu = true,
+                        callback = function(menu)
+                            if menu then menu:closeMenu() end
                             self:setAudioSource("remote")
                             self:_show_playback_controls()
                         end,

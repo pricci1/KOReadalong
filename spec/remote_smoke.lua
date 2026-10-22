@@ -221,9 +221,27 @@ function Smoke:onReaderReady()
         self.ui:handleEvent(Event:new("Suspend"))
         check(plugin.remote:getStatus().state == "idle", "Suspend did not stop receiver")
         check(plugin.remote:setCorrection(-0.75), "correction not saved")
-        check(plugin:setAudioSource("local"), "could not return to local audio")
+        click(panel:getButtonById("hide"))
+        local function source_menu()
+            self.ui.menu:onShowMenu()
+            local menu = self.ui.menu.menu_container[1]
+            local items = self.ui.menu.menu_items.read_along
+            menu:onMenuSelect(items)
+            menu:onMenuSelect(items.sub_item_table[3])
+            wait(0.2)
+            return menu
+        end
+        local menu = source_menu()
+        shot("remote-source")
+        click(menu.item_group[2]) -- This device, first native radio item after the tab bar
+        check(not self.ui.menu.menu_container, "source menu remained under controls")
+        check(plugin.coordinator, "could not return to local audio")
         check(plugin.coordinator:getState() == "idle", "source switch started audio")
-        check(plugin:setAudioSource("remote"), "could not return to phone audio")
+        click(plugin.playback_dialog:getButtonById("hide"))
+        menu = source_menu()
+        click(menu.item_group[4]) -- Storyteller phone, after first item and separator
+        check(plugin.remote and not plugin.coordinator, "could not return to phone audio")
+        check(not self.ui.menu.menu_container, "remote source menu remained under controls")
         check(plugin.remote:getStatus().state == "idle", "source switch opened sockets")
         check(plugin.remote:getStatus().correction == -0.75, "source switch lost correction")
         plugin:onCloseDocument()
