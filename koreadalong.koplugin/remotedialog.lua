@@ -52,7 +52,7 @@ function RemoteDialog:_choose()
     local chooser
     for __, peer in ipairs(self.follower:getPeers()) do
         items[#items + 1] = {
-            text = peer.host .. " · " .. peer.book,
+            text = peer.host .. " · " .. preview(peer.book, 64),
             mandatory = peer.matches and _("Text matches") or _("No match"),
             callback = function()
                 UIManager:close(chooser)
@@ -80,6 +80,9 @@ Matching text is not proof of book identity. Confirm this is your phone and the 
         width = math.floor(Device.screen:getWidth() * 0.9),
         height = math.floor(Device.screen:getHeight() * 0.7),
         items_per_page = 6, items_max_lines = 2,
+        close_callback = function()
+            if self.child == chooser then self.child = nil end
+        end,
     }
     self.child = chooser
     UIManager:show(chooser)
