@@ -1,0 +1,348 @@
+#!/usr/bin/env python3
+"""Replay EPUB overlay fragments as Storyteller v1 UDP positions (no audio).
+
+Interactive seek indices are zero-based indices in the printed fragment list.
+--repeat is a finite pass count, not an infinite loop. --interface is an IPv4
+address, not a device name. Book identity defaults are synthetic; override them
+when testing a reader which requires a particular Storyteller library identity.
+"""
+
+import argparse
+from datetime import datetime, timezone
+import json
+import math
+import posixpath
+import queue
+import re
+import socket
+import struct
+import sys
+import threading
+import time
+from urllib.parse import unquote, urlsplit
+import uuid
+import xml.etree.ElementTree as ET
+import zipfile
+
+
+SERVICE = "_storyteller-lrs._udp.local."
+
+
+def log(message):
+    print(f"{datetime.now(timezone.utc).isoformat()} {message}", flush=True)
+
+
+def positive(value):
+    number = float(value)
+    if not math.isfinite(number) or number <= 0:
+        raise ValueError("expected a finite positive number")
+    return number
+
+
+def resolve(base, reference):
+    url = urlsplit(reference)
+    path = unquote(url.path)
+    if url.scheme or url.netloc or url.query or path.startswith("/") or "\\" in path or "\x00" in path:
+        raise ValueError(f"unsafe archive reference: {reference!r}")
+    path = posixpath.normpath(posixpath.join(posixpath.dirname(base), path)) if path else base
+    if path in ("", ".", "..") or path.startswith("../"):
+        raise ValueError(f"reference escapes archive: {reference!r}")
+    return path, unquote(url.fragment)
+
+
+def clock(value):
+    value = value.removeprefix("npt=")
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)(h|min|ms|s)?", value)
+    if match:
+        result = float(match[1]) * {None: 1, "h": 3600, "min": 60, "ms": .001, "s": 1}[match[2]]
+    elif re.fullmatch(r"\d+:\d{2}(?::\d{2})?(?:\.\d+)?", value):
+        parts = [float(part) for part in value.split(":")]
+        if any(part >= 60 for part in parts[1:]):
+            raise ValueError(f"invalid SMIL clock: {value}")
+        result = 0
+        for part in parts:
+            result = result * 60 + part
+    else:
+        raise ValueError(f"invalid SMIL clock: {value!r}")
+    if not math.isfinite(result):
+        raise ValueError(f"invalid SMIL clock: {value!r}")
+    return result
+
+
+def read_epub(filename):
+    with zipfile.ZipFile(filename) as archive:
+        def xml(path):
+            info = archive.getinfo(path)
+            if info.file_size > 8 * 1024 * 1024:
+                raise ValueError(f"XML too large: {path}")
+            data = archive.read(path)
+            if b"<!DOCTYPE" in data.upper() or b"<!ENTITY" in data.upper():
+                raise ValueError(f"DTD/entities not supported: {path}")
+            return ET.fromstring(data)
+
+        container = xml("META-INF/container.xml")
+        rootfile = container.find(".//{*}rootfile")
+        if rootfile is None:
+            raise ValueError("container has no rootfile")
+        opf, _ = resolve("", rootfile.attrib["full-path"])
+        package = xml(opf)
+        manifest = {item.attrib["id"]: item for item in package.findall("./{*}manifest/{*}item")}
+        fragments = []
+        for section, itemref in enumerate(package.findall("./{*}spine/{*}itemref")):
+            item = manifest[itemref.attrib["idref"]]
+            if "media-overlay" not in item.attrib:
+                continue
+            overlay = manifest[item.attrib["media-overlay"]]
+            smil, _ = resolve(opf, overlay.attrib["href"])
+            for entry, par in enumerate(xml(smil).iterfind(".//{*}par")):
+                text = par.find("{*}text")
+                audio = par.find("{*}audio")
+                if text is None or audio is None:
+                    raise ValueError(f"{smil}: par {entry} needs text and audio")
+                href, fragment = resolve(smil, text.attrib["src"])
+                audio_path, _ = resolve(smil, audio.attrib["src"])
+                archive.getinfo(href)
+                archive.getinfo(audio_path)
+                begin = clock(audio.get("clipBegin", "0"))
+                end = clock(audio.attrib["clipEnd"])
+                if end <= begin:
+                    raise ValueError(f"{smil}: par {entry} has nonpositive interval")
+                fragments.append((section, entry, href, fragment, end - begin))
+        if not fragments:
+            raise ValueError("EPUB has no media-overlay fragments")
+        return fragments
+
+
+def dns_name(data, offset):
+    labels, seen, end = [], set(), None
+    while True:
+        if offset in seen or offset >= len(data):
+            raise ValueError("invalid DNS name")
+        seen.add(offset)
+        size = data[offset]
+        if size & 0xC0 == 0xC0:
+            if end is None:
+                end = offset + 2
+            offset = struct.unpack_from("!H", data, offset)[0] & 0x3FFF
+            continue
+        if size & 0xC0 or size > 63:
+            raise ValueError("invalid DNS label")
+        offset += 1
+        if not size:
+            return ".".join(labels) + ".", end or offset
+        if offset + size > len(data):
+            raise ValueError("truncated DNS label")
+        labels.append(data[offset:offset + size].decode("utf-8"))
+        offset += size
+
+
+def dns_records(data):
+    _, flags, questions, answers, authority, additional = struct.unpack_from("!6H", data)
+    if not flags & 0x8000:
+        return []
+    offset = 12
+    for _ in range(questions):
+        _, offset = dns_name(data, offset)
+        offset += 4
+    records = []
+    for _ in range(answers + authority + additional):
+        name, offset = dns_name(data, offset)
+        kind, cls, ttl, length = struct.unpack_from("!HHIH", data, offset)
+        offset += 10
+        end = offset + length
+        if end > len(data):
+            raise ValueError("truncated DNS record")
+        value = None
+        if kind == 12:
+            value, _ = dns_name(data, offset)
+        elif kind == 33 and length >= 7:
+            _, _, port = struct.unpack_from("!HHH", data, offset)
+            host, _ = dns_name(data, offset + 6)
+            value = (host.lower(), port)
+        elif kind == 1 and length == 4:
+            value = socket.inet_ntoa(data[offset:end])
+        if value is not None and cls & 0x7FFF == 1:
+            records.append((name.lower(), kind, ttl, value))
+        offset = end
+    return records
+
+
+def discover(args):
+    cache = {}
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("", args.mdns_port))
+        interface = socket.inet_aton(args.interface)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP,
+                        socket.inet_aton("224.0.0.251") + interface)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, interface)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 255)
+        deadline, next_query = time.monotonic() + args.discover_timeout, 0
+        while time.monotonic() < deadline:
+            if time.monotonic() >= next_query:
+                questions = {(SERVICE, 12)}
+                for (name, kind, value) in cache:
+                    if name == SERVICE and kind == 12 and value.startswith("koreadalong-"):
+                        questions.add((value, 33))
+                    if kind == 33:
+                        questions.add((value[0], 1))
+                for name, kind in questions:
+                    wire = b"".join(bytes([len(label.encode())]) + label.encode()
+                                    for label in name.rstrip(".").split(".")) + b"\0"
+                    sock.sendto(struct.pack("!6H", 0, 0, 1, 0, 0, 0) + wire +
+                                struct.pack("!HH", kind, 1), ("224.0.0.251", args.mdns_port))
+                next_query = time.monotonic() + .3
+            sock.settimeout(min(.1, max(.001, deadline - time.monotonic())))
+            try:
+                data, _ = sock.recvfrom(65535)
+                for name, kind, ttl, value in dns_records(data):
+                    if kind == 12:
+                        value = value.lower()
+                    key = (name, kind, value)
+                    if ttl:
+                        cache[key] = time.monotonic() + ttl
+                    else:
+                        cache.pop(key, None)
+            except socket.timeout:
+                pass
+            except (ValueError, struct.error, UnicodeError):
+                continue
+        records = [key for key, expiry in cache.items() if expiry > time.monotonic()]
+        instances = {value for name, kind, value in records
+                     if name == SERVICE and kind == 12 and value.startswith("koreadalong-")}
+        if len(instances) != 1:
+            raise ValueError(f"discovery requires exactly one KOReadalong- instance; found {sorted(instances)}")
+        instance = next(iter(instances))
+        targets = {(ip, port) for name, kind, value in records if name == instance and kind == 33
+                   for host, port in [value] for owner, record_type, ip in records
+                   if owner == host and record_type == 1}
+        if len(targets) != 1:
+            raise ValueError(f"{instance}: expected one resolved IPv4 endpoint, found {sorted(targets)}")
+        target = next(iter(targets))
+        log(f"Discovered {instance} at {target[0]}:{target[1]}")
+        return target
+
+
+def replay(args, fragments, target):
+    commands = queue.Queue()
+    if args.interactive:
+        def read_commands():
+            for line in sys.stdin:
+                commands.put(line.strip())
+            commands.put("quit")
+        threading.Thread(target=read_commands, daemon=True).start()
+        log("Commands: pause, resume, next, previous, seek INDEX, rate VALUE, quit (EOF quits)")
+    index, passes, paused = 0, 0, False
+    rate, remaining, last = args.rate, 0, time.monotonic()
+    active = False
+    pending = []
+    sender = str(uuid.uuid4())
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        while True:
+            now = time.monotonic()
+            if not paused:
+                remaining -= (now - last) * rate
+                if active and remaining <= 0:
+                    active = False
+                    index += 1
+                    if index == len(fragments):
+                        passes += 1
+                        index = 0
+            last = now
+            try:
+                command = commands.get_nowait().split()
+            except queue.Empty:
+                command = []
+            if command:
+                try:
+                    if command == ["quit"]:
+                        return
+                    if command == ["pause"]:
+                        paused = True
+                    elif command == ["resume"]:
+                        paused = False
+                    elif command[0] in ("next", "previous", "seek"):
+                        if command[0] == "seek" and len(command) == 2:
+                            new_index = int(command[1])
+                        elif len(command) == 1 and command[0] != "seek":
+                            new_index = index + (1 if command[0] == "next" else -1)
+                        else:
+                            raise ValueError("usage: next | previous | seek INDEX")
+                        if not 0 <= new_index < len(fragments):
+                            raise ValueError("seek index out of range")
+                        index, remaining = new_index, 0
+                        active = False
+                    elif command[0] == "rate" and len(command) == 2:
+                        rate = positive(command[1])
+                    else:
+                        raise ValueError("unknown command or wrong arguments")
+                    log(f"Command: {' '.join(command)}")
+                except ValueError as error:
+                    log(f"Command error: {error}")
+            if not paused and remaining <= 0 and passes < args.repeat:
+                section, entry, href, fragment, duration = fragments[index]
+                packet = {"version": 1, "senderID": sender,
+                          "bookID": {"sourceID": args.source_id, "uuid": args.book_uuid},
+                          "sectionIndex": section, "entryIndex": entry,
+                          "textHref": href, "textId": fragment,
+                          "playbackRate": rate, "sentAt": time.time()}
+                pending.append((now + args.delay, index, packet))
+                remaining = duration
+                active = True
+            for delivery, sent_index, packet in pending[:]:
+                if delivery <= now:
+                    sock.sendto(json.dumps(packet, separators=(",", ":"), allow_nan=False).encode(), target)
+                    log(f"Sent [{sent_index}] {packet['textHref']}#{packet['textId']} "
+                        f"section={packet['sectionIndex']} entry={packet['entryIndex']} "
+                        f"rate={packet['playbackRate']} sentAt={packet['sentAt']}")
+                    pending.remove((delivery, sent_index, packet))
+            # Advance only after the current simulated clip's duration elapsed.
+            if not paused and remaining > 0:
+                wait = min(.02, remaining / rate)
+            else:
+                wait = .02
+            time.sleep(wait)
+            if passes >= args.repeat and not pending:
+                return
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("epub")
+    parser.add_argument("--rate", type=float, default=1)
+    parser.add_argument("--delay", type=float, default=0, help="delivery delay in seconds; sentAt remains creation time")
+    parser.add_argument("--repeat", type=int, default=1, help="finite number of complete passes (default: 1)")
+    parser.add_argument("--target", help="HOST:PORT; bypass mDNS discovery")
+    parser.add_argument("--discover-timeout", type=float, default=3)
+    parser.add_argument("--interface", default="0.0.0.0", help="local IPv4 address for mDNS")
+    parser.add_argument("--mdns-port", type=int, default=5353)
+    parser.add_argument("--interactive", action="store_true")
+    parser.add_argument("--source-id", default="storyteller-simulator")
+    parser.add_argument("--book-uuid", help="default: EPUB filename stem")
+    args = parser.parse_args()
+    try:
+        positive(args.rate)
+        positive(args.discover_timeout)
+        if not math.isfinite(args.delay) or args.delay < 0 or args.repeat < 1 or not 1 <= args.mdns_port <= 65535:
+            raise ValueError("delay must be finite and nonnegative; repeat >= 1; port 1..65535")
+        args.book_uuid = args.book_uuid or posixpath.splitext(posixpath.basename(args.epub))[0]
+        fragments = read_epub(args.epub)
+        if args.target:
+            host, port = args.target.rsplit(":", 1)
+            port = int(port)
+            if not host or not 1 <= port <= 65535:
+                raise ValueError("target must be HOST:PORT with port 1..65535")
+            target = (socket.gethostbyname(host), port)
+            log(f"Target {target[0]}:{target[1]} (discovery bypassed)")
+        else:
+            target = discover(args)
+        log(f"Loaded {len(fragments)} fragments; bookID={args.source_id}/{args.book_uuid}")
+        replay(args, fragments, target)
+    except (OSError, ValueError, KeyError, ET.ParseError, zipfile.BadZipFile) as error:
+        parser.exit(1, f"{parser.prog}: {error}\n")
+    except KeyboardInterrupt:
+        parser.exit(130, "Interrupted\n")
+
+
+if __name__ == "__main__":
+    main()

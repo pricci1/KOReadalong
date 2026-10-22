@@ -1,0 +1,98 @@
+#!/usr/bin/env python3
+"""Exercise remote following with real KOReader, native pointer input and LAN IO.
+
+Only the phone is simulated. Runs in an owned temporary HOME and Xvfb display;
+does not stop existing KOReader/mpv sessions or use the public mDNS port.
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--artifacts", type=Path, help="directory for screenshots, log and optional recording")
+    parser.add_argument("--record", action="store_true")
+    parser.add_argument("--width", type=int, default=600)
+    parser.add_argument("--height", type=int, default=800)
+    parser.add_argument("--plugin-dir", type=Path, help="test an extracted release instead of the checkout")
+    parser.add_argument("--inside-xvfb", action="store_true", help=argparse.SUPPRESS)
+    args = parser.parse_args()
+    if args.record and not args.artifacts:
+        parser.error("--record requires --artifacts")
+    root = Path(__file__).resolve().parent.parent
+    if not args.inside_xvfb:
+        return subprocess.call(["xvfb-run", "-a", "-s", f"-screen 0 {args.width}x{args.height}x24",
+                                sys.executable, __file__, *sys.argv[1:], "--inside-xvfb"], cwd=root)
+
+    if args.artifacts:
+        args.artifacts = args.artifacts.resolve()
+        args.artifacts.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="remote-smoke-", dir=root / ".cache") as temporary:
+        owned = Path(temporary)
+        runtime = root / ".cache/koreader/lib/koreader"
+        isolated_runtime = owned / "runtime"
+        isolated_runtime.mkdir()
+        for path in runtime.iterdir():
+            if path.name != "plugins":
+                (isolated_runtime / path.name).symlink_to(path)
+        (isolated_runtime / "plugins").mkdir()
+        for path in (runtime / "plugins").iterdir():
+            if path.name != "koreadalong.koplugin":
+                (isolated_runtime / "plugins" / path.name).symlink_to(path)
+        plugin = (args.plugin_dir or root / "koreadalong.koplugin").resolve()
+        (isolated_runtime / "plugins/koreadalong.koplugin").symlink_to(plugin)
+        home = owned / "home"
+        config = home / ".config/koreader"
+        plugins = config / "plugins"
+        test_plugin = plugins / "zzremotesmoke.koplugin"
+        test_plugin.mkdir(parents=True)
+        (test_plugin / "main.lua").symlink_to(root / "spec/remote_smoke.lua")
+        # No test plugin is added to the shared runtime's plugin directory.
+        (config / "settings.reader.lua").write_text(
+            "return { sdl_window = { width = %d, height = %d, left = 0, top = 0 }, "
+            "koreadalong_mark_mode = 'underline', extra_plugin_paths = { %s }, "
+            "plugins_disabled = { koreadalongsmoke = true } }\n"
+            % (args.width, args.height, json.dumps(str(plugins))))
+        epub = owned / "chapter-transition.epub"
+        shutil.copyfile(root / "spec/fixtures/chapter-transition.epub", epub)
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as reservation:
+            reservation.bind(("127.0.0.1", 0))
+            mdns_port = reservation.getsockname()[1]
+        env = dict(os.environ, HOME=str(home), XDG_CONFIG_HOME=str(home / ".config"),
+                   KO_MULTIUSER="1", LC_ALL="en_US.UTF-8", SDL_VIDEODRIVER="x11",
+                   KOREADALONG_REMOTE_MDNS_PORT=str(mdns_port))
+        if args.artifacts:
+            env["KOREADALONG_REMOTE_ARTIFACTS"] = str(args.artifacts)
+        recorder = None
+        if args.record:
+            recorder = subprocess.Popen([
+                "ffmpeg", "-loglevel", "error", "-y", "-f", "x11grab", "-framerate", "15",
+                "-video_size", f"{args.width}x{args.height}", "-i", os.environ["DISPLAY"],
+                "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                str(args.artifacts / "remote-interaction.mp4"),
+            ], stdin=subprocess.PIPE)
+        try:
+            result = subprocess.run([str(runtime / "luajit"), "reader.lua", "-d", str(epub)],
+                                    cwd=isolated_runtime, env=env, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, timeout=90)
+        finally:
+            if recorder:
+                recorder.communicate(b"q", timeout=15)
+        print(result.stdout)
+        if args.artifacts:
+            (args.artifacts / "remote-smoke.log").write_text(result.stdout)
+        if result.returncode or "REMOTE_SMOKE PASS" not in result.stdout:
+            return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

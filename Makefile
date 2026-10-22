@@ -1,10 +1,10 @@
 .PHONY: check lint run run-headless syntax test shell-test mpv-integration \
-	kinamp-integration smoke-integration release-test dist
+	kinamp-integration smoke-integration remote-integration simulator-test release-test dist
 
 LUA_FILES := $(shell find koreadalong.koplugin spec -type f -name '*.lua' 2>/dev/null)
 BUSTED ?= /usr/bin/busted
 
-check: lint syntax test shell-test release-test
+check: lint syntax test shell-test simulator-test release-test
 
 lint:
 	luacheck -q koreadalong.koplugin spec
@@ -18,6 +18,9 @@ test:
 shell-test:
 	@for file in scripts/kinamp-diagnostic spec/kinamp_diagnostic_test.sh; do sh -n "$$file"; done
 	./spec/kinamp_diagnostic_test.sh
+
+simulator-test:
+	python3 spec/storyteller_simulator_test.py
 
 release-test:
 	python3 spec/release_test.py
@@ -33,6 +36,9 @@ kinamp-integration:
 
 smoke-integration:
 	./scripts/run-smoke
+
+remote-integration:
+	./scripts/run-remote-smoke
 
 run:
 	./scripts/run-koreader
