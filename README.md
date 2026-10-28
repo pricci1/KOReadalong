@@ -5,6 +5,9 @@ KOReadalong plays the audio embedded in a narrated EPUB and marks the text
 being read, using the book's own timing rather than a separate audiobook or
 text-to-speech service.
 
+Its development was informed by [Storyteller](https://storyteller-platform.dev/)'s
+read-along approach and implementation.
+
 - **Follow along.** Turn pages automatically with narration, or don't.
 - **Pick up later.** Resume your saved place, start at the current page, or hold
   a word and choose **Read from here**.
@@ -112,10 +115,13 @@ Bluetooth guard was enabled and how long playback ran.
 
 ## Credits
 
-KOReadalong is mostly derived form, and made possible by, the following projects and their contributors:
+KOReadalong builds on the work of the following projects and their contributors:
 
-- [Storyteller](https://storyteller-platform.dev/) creates the aligned readaloud
-  EPUBs that bring ebook text and audiobook narration together.
+- [Storyteller](https://storyteller-platform.dev/): KOReadalong draws on
+  Storyteller's read-along approach and implementation research, bringing
+  synchronized reading and listening to KOReader. Storyteller was a key technical
+  reference during development and creates the aligned EPUBs that KOReadalong
+  plays.
 - [KinAMP](https://github.com/kbarni/KinAMP) provides the Kindle audio player,
   Bluetooth setup, and playback interface used by KOReadalong's Kindle backend.
   The [experimental fork](https://github.com/pricci1/KinAMP-fork) builds on that work
