@@ -27,8 +27,21 @@ guide](https://storyteller-platform.dev/docs/managing/aligning), download the
 resulting EPUB, and open it in KOReader with KOReadalong. **KOReadalong plays these
 aligned books; it does not align a separate ebook and audiobook itself.**
 
+## Screenshots
+
+| Follow the narration | Compact playback controls | Expanded controls |
+| :---: | :---: | :---: |
+| [<img src="docs/images/moby-dick-margin.png" width="220" alt="Moby Dick with a margin bar marking the narrated passage">](docs/images/moby-dick-margin.png) | [<img src="docs/images/moby-dick-controls.png" width="220" alt="Compact Read along panel playing Moby Dick, with pause, seek, and Follow controls">](docs/images/moby-dick-controls.png) | [<img src="docs/images/moby-dick-expanded.png" width="220" alt="Expanded Read along panel with playback-speed and additional controls">](docs/images/moby-dick-expanded.png) |
+| Keep reading with the panel hidden. | Pause, seek, or toggle page following. | Open **More** for speed and additional actions. |
+
+Captured in KOReader v2026.07.1 on Linux with a first-chapter excerpt of
+[Moby Dick](https://github.com/tefkah/unzip-exp/blob/main/src/__bench__/Moby.epub),
+retaining its original embedded narration and timing overlays. Click an image
+to view it at full size.
+
 ## Contents
 
+- [Screenshots](#screenshots)
 - [Install](#install)
 - [Start listening](#start-listening)
 - [Compatibility and limitations](#compatibility-and-limitations)
