@@ -35,9 +35,23 @@ aligned books; it does not align a separate ebook and audiobook itself.**
 | Keep reading with the panel hidden. | Pause, seek, or toggle page following. | Open **More** for speed and additional actions. |
 
 Captured in KOReader v2026.07.1 on Linux with a first-chapter excerpt of
-[Moby Dick](https://github.com/tefkah/unzip-exp/blob/main/src/__bench__/Moby.epub),
+Moby Dick,
 retaining its original embedded narration and timing overlays. Click an image
 to view it at full size.
+
+<details>
+<summary>Watch a 30-second demo with audio</summary>
+
+Hear the original public-domain narration while the margin mark follows the
+text. The demo also shows **More**, **Less**, and **Hide** without interrupting
+playback.
+
+[<img src="docs/images/moby-dick-controls.png" width="280" alt="Play the Moby Dick read-along demo with original narration">](docs/media/moby-dick-demo.mp4?raw=1)
+
+[▶ Watch or download the demo with audio](docs/media/moby-dick-demo.mp4?raw=1)
+(MP4 with audio, 30 seconds, about 735 KB).
+
+</details>
 
 ## Contents
 
